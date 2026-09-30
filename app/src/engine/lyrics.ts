@@ -37,7 +37,8 @@ export class Lyrics {
   }
 
   static async load(): Promise<Lyrics> {
-    for (const url of ['data/lyrics.json', 'data/lyrics.approx.json']) {
+    const cut = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('cut') : null;
+    for (const url of cut ? [`data/cuts/${cut}/lyrics.json`] : ['data/lyrics.json', 'data/lyrics.approx.json']) {
       const r = await fetch(url);
       if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) return new Lyrics(await r.json());
     }

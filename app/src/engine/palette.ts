@@ -1,6 +1,7 @@
 import { hexToLinear } from './util';
 
 // The whole video lives in a restrained palette: ink, bone, and one signal colour.
+// power-video: the signal family is "submit blue" (the AI line); no orange. See docs/DECISIONS.md.
 // One rare accent (acid, the shrooms moment) — see docs/TREATMENT.md.
 export const HEX = {
   ink: '#0A0A0B', // background black (slightly warm)
@@ -8,10 +9,10 @@ export const HEX = {
   graphite: '#5E5B57', // dim lines, secondary text
   ash: '#9C978F', // mid grey
   bone: '#EEE9DF', // paper white, primary text
-  signal: '#FF4D12', // hazard orange: the spark, the fuse, P(doom)
-  ember: '#FF8A3D', // hotter, lighter orange for cores/highlights
-  blood: '#C21D0B', // deep red-orange for shadows of signal
-  acid: '#D8FF3C', // acid: only for the shrooms moment
+  signal: '#2F5BFF', // submit blue: the AI line, the only colour that may glow
+  ember: '#9DB4FF', // hotter, lighter blue for cores/highlights
+  blood: '#14237A', // deep blue for shadows of signal
+  acid: '#D8FF3C', // (P(doom)'s shrooms accent; unused here)
 } as const;
 
 export type PaletteKey = keyof typeof HEX;

@@ -1,113 +1,90 @@
-// HOOK x4 — "I'M / UPPING / MY / P(DOOM)": one full-frame slam per sung word, then P(doom)
-// itself takes the frame (maths label, rolling digits, scale) and leaves on the cut, a different
-// way each time:
-//   n=1 bone on ink, clean. The number lands on the DOOM hit; on the next 8th it implodes into a
-//       spark and a centred P(DOOM) bursts out of it: FIG. 3a (room) opens by shattering that outline.
-//   n=2 ink on a signal field. The instrument rolls in on "P(", and on DOOM the field closes like an
-//       eyelid onto the glowing seam that opens FIG. 6 (ascent).
-//   n=3 the breakdown: hairlines, tiny, black. A ghost of the number waits behind the words, rolls,
-//       and burns out filament by filament on the cut.
-//   n=4 maximal: strobes, stacked outlines, 0.99999…; the 9s multiply until the string is a thread,
-//       which switches off into the loom's weft line (FIG. 13).
+// HOOK ×4: "WE / APPRECIATE / POWER, WE / APPRECIATE / POWER". Structure: P(doom)'s hook, move for
+// move (docs/PDOOM-STRUCTURE.md): one full-frame slam per sung word, then the value takes the frame
+// (the sung POWER glides into its label, the watts roll on drums, a log bar) and leaves on the cut,
+// a different way each time:
+//   n=1 bone on ink, clean. Frame 1 is the ignition: the dot lights on the first downbeat. The watts
+//       land after the hit; on the next 8th the instrument implodes into the dot, on the first hold of
+//       the climbing wall (world1).
+//   n=2 ink on a blue field. The instrument rolls in on the second APPRECIATE and lands on the hit;
+//       then the field closes from above and below into one blue line: world2's busbar.
+//   n=3 the quiet chorus: hairlines, tiny, black. A ghost of the number waits behind the words, rolls,
+//       and burns out filament by filament; one dot is left, the petri dish's centre (world4).
+//   n=4 maximal: strobes, stacked outlines, a re-slam on every beat; past 1 GW the zeros multiply
+//       until the string is a thread, which becomes world5's first hypha.
+// APPRECIATE rises (an asset that appreciates goes up). Values and hand-off geometry: _power.ts.
 import type * as THREE from 'three';
 import { Scene, type Frame, type PostOverrides } from '../engine/scene';
 import { FSPass, Layer2D, W, H } from '../engine/gl';
 import { HEX, rgba } from '../engine/palette';
-import { F, font, measure, layout, plain, type TextLayout } from '../engine/type';
-import { PDoom, formatPDoom } from '../engine/hud';
+import { F, font, measure, layout, type TextLayout } from '../engine/type';
 import type { Word } from '../engine/lyrics';
 import { clamp, ease, hash, lerp, noise1, prog, pulse, smoothstep, frameIdx } from '../engine/util';
-import { sparkHead2D } from './_motifs';
+import { dot2D, burst2D, VALUES, HANDOFF, kIndex, fmtK, siW, HUMANITY_W } from './_power';
 
 const CAP = 0.686; // Archivo cap height / em
 const PCAP = 0.698; // Plex Mono cap height / em
 const PADV = 0.6; // Plex Mono advance / em
-/** Space between the italic P and "(" (em): no kerning between the two runs, so it is set by eye (the italic P's bowl overhangs its advance). */
-const P_GAP = 0.05;
+const K0 = -1, K1 = 3; // the Kardashev ruler
 
-/** The instrument at full scale: maths label top-left, digits, tick bar (hairline variant for n=3). */
-const BIG = { numSize: 720, numX: 92, numC: 585, labX: 118, labY: 214, labSize: 168, barX: 118, barY: 906, barW: W - 236 };
-const HAIR = { numSize: 740, numX: 88, numC: 542, labX: 118, labY: 190, labSize: 84, barX: 118, barY: 890, barW: W - 236 };
-
-// ---- hand-off geometry of the plates that follow (copied, not imported: they are other agents' files)
-/** FIG. 3a (room): centred P(DOOM), Archivo 900 w100, 300 px, baseline H/2 + 0.36 em; its spark roots at the centre. */
-const ROOM = { size: 300, root: { x: W * 0.5, y: H * 0.53 } };
-/** FIG. 6 (ascent): the closed eye's camera and orbit (eye space: y up, seam y = TILT·x, |x| ≤ A). */
-const EYE = { zoom: 0.68, rot: -0.07, cx: 0.12, cy: -0.06, A: 1, HU: 0.6, HL: 0.5, TILT: 0.06 };
-/** FIG. 13 (loom): the reed's hairline across the loom at the cut, and the shuttle's spark on it. */
-const THREAD = { y: 629, sparkX: 300 };
-
-/** Deadpan footnote under the big number (Δ is computed from the actual step). */
-const NOTES: Record<number, string> = {
-  1: 'posterior · updated on one (1) chatbot',
-  2: 'posterior · updated on Sydney',
-  3: 'posterior · updated on a cat',
-  4: 'posterior · rounded up',
-};
+/** The instrument at full scale: label top-left, digits (right-aligned on the unit), log bar; hairline variant for n=3. */
+const BIG = { numSize: 560, numC: 585, labX: 118, labY: 214, labSize: 168, barX: 118, barY: 906, barW: W - 236 };
+const HAIR = { numSize: 520, numC: 542, labX: 118, labY: 190, labSize: 84, barX: 118, barY: 890, barW: W - 236 };
+const LABELS = ['WE', 'APPRECIATE', 'POWER', 'WE', 'APPRECIATE', 'POWER'];
 
 type Col = keyof typeof HEX;
-type Style = (i: number) => { col: string; a: number };
 
 export default class Hook extends Scene {
   n = 1;
-  pd!: PDoom;
   L = new Layer2D();
   comp!: FSPass;
   words: Word[] = [];
   ws: number[] = [];
-  /** P( and DOOM sung; the instrument's entrance; its roll; the exit window; hook 1's P(DOOM) burst. */
-  tP = 0; tDoom = 0; tNum = 0; tRoll0 = 0; tRoll1 = 0; tX0 = 0; tX1 = 0; tSlam = 0;
-  dPrev = 0; dNew = 0;
-  prevWord = '';
-  lw = 1; // hairline width multiplier (kept constant under the exit transforms)
+  /** The hit (second POWER); the instrument's entrance; its roll; the exit window; hook 1's implosion. */
+  tHit = 0; tNum = 0; tRoll0 = 0; tRoll1 = 0; tX0 = 0; tX1 = 0; tSlam = 0; tIgn = 0;
+  vPrev = 1; vNew = 20;
+  lw = 1;
   f = {
-    im: F.archivo(100, 900), up: F.archivo(125, 900), my: F.archivo(62, 900), doom: F.archivo(100, 900),
-    P: F.archivoItalic(100, 800), paren: F.archivo(62, 300), hair: F.archivo(100, 300), hairW: F.archivo(125, 300),
+    we: F.archivo(100, 900), app: F.archivo(62, 900), pow: F.archivo(62, 900),
+    hair: F.archivo(100, 300), hairW: F.archivo(125, 300),
     mono: F.mono(400), monoM: F.mono(500), monoL: F.mono(300),
   };
-  upLay!: TextLayout;
-  finLay!: TextLayout;
+  appLay!: TextLayout;
 
   override init() {
     const { lyrics, params, start, end, audio: au } = this.ctx;
     this.n = Number(params.n ?? 1);
     const n = this.n;
-    this.pd = new PDoom(lyrics);
-    const line = lyrics.linesIn(start - 0.3, end).find((l) => /upping/i.test(l.text)) ?? lyrics.linesIn(start, end)[0]!;
-    this.words = line.words.slice(0, 4);
-    const prev = lyrics.lines[line.i - 1];
-    this.prevWord = prev ? plain(prev.words[prev.words.length - 1]!.w) : ''; // typed (mono): typewriter quotes
+    const line = lyrics.linesIn(start - 0.3, end).find((l) => /appreciate power/i.test(l.text)) ?? lyrics.linesIn(start - 0.3, end)[0]!;
+    this.words = line.words.slice(0, 6);
     this.ws = this.words.map((w) => w.start);
-    const wP = this.words[3] ?? this.words[this.words.length - 1]!;
-    this.tP = wP.start;
-    this.tDoom = Math.min(wP.syl && wP.syl.length > 1 ? wP.syl[1]![0] : wP.start + 0.4 * (wP.end - wP.start), end - 0.03);
-    const step = this.pd.steps.find((s) => s.t >= this.tP - 0.01 && s.t < end + 0.2) ?? this.pd.lastStep(end);
-    const i = this.pd.steps.indexOf(step);
-    this.dPrev = this.pd.steps[Math.max(0, i - 1)]!.v; this.dNew = step.v;
+    while (this.ws.length < 6) this.ws.push(lerp(start, end, this.ws.length / 6));
+    this.tHit = Math.min(this.ws[5]!, end - 0.2);
+    // the previous hook on screen (a cut version may skip one): its value is where this one rolls from
+    const prev = Number(params.prev ?? n - 1);
+    this.vPrev = prev >= 1 ? VALUES[prev - 1]!.w : 1;
+    this.vNew = VALUES[n - 1]!.w;
+    this.tIgn = au.downbeats[0] ?? 0.04;
 
-    // Hooks 1 and 4 have a beat after the DOOM hit: the number arrives on DOOM. In 2 and 3 the hit is
-    // the cut itself, so the number arrives on "P(" and lands on DOOM.
+    // Hooks 1 and 4 have a beat after the hit: the number arrives on the hit. In 2 and 3 the number
+    // arrives on the second APPRECIATE and lands on the hit, which starts the exit.
     const early = n === 2 || n === 3;
-    this.tNum = early ? this.tP : this.tDoom;
+    // (1 and 4: the second POWER holds full frame for a moment before it glides into the label)
+    this.tNum = early ? this.ws[4]! : this.tHit + 0.1;
     this.tRoll0 = this.tNum + 0.015;
-    this.tRoll1 = n === 1 ? this.tDoom + 0.13 : n === 4 ? this.tDoom + 0.08 : Math.max(this.tRoll0 + 0.08, n === 3 ? this.tP + 0.11 : this.tDoom - 0.015);
-    // exits (all land on the cut)
+    this.tRoll1 = n === 1 ? this.tNum + 0.1 : n === 4 ? this.tNum + 0.08 : this.tHit - 0.015;
     if (n === 1) {
-      const hat = au.timeOfBeat(Math.round(au.beatAt(this.tDoom)) + 0.5); // the 8th after DOOM
-      this.tSlam = hat > this.tDoom + 0.15 && hat < end - 0.12 ? hat : lerp(this.tDoom, end, 0.5);
+      const hat = au.timeOfBeat(Math.round(au.beatAt(this.tHit)) + 0.5); // the 8th after the hit, if it fits
+      this.tSlam = hat > this.tRoll1 + 0.15 && hat < end - 0.12 ? hat : end - 0.2;
       this.tX0 = this.tSlam - 0.066; this.tX1 = this.tSlam - 0.004;
     } else if (n === 2) {
-      this.tX0 = Math.min(this.tDoom, end - 0.05); this.tX1 = end - 0.002;
+      this.tX0 = this.tHit + 0.06; this.tX1 = end - 0.002;
     } else if (n === 3) {
-      this.tX0 = Math.max(this.tRoll1 + 0.01, end - 0.16); this.tX1 = end - 0.004;
+      this.tX0 = Math.max(this.tRoll1 + 0.06, end - 0.42); this.tX1 = end - 0.004;
     } else {
       this.tX0 = end - 0.1; this.tX1 = end - 0.008;
     }
-    this.upLay = layout('UPPING', this.f.up, 100);
-    this.finLay = layout('P(DOOM)', this.f.doom, ROOM.size);
-    this.comp = new FSPass(COMP, {
-      tex: { value: this.L.texture }, bgCol: { value: [0, 0, 0] }, echo: { value: 0 }, hot: { value: 1 }, gain: { value: 1 },
-    });
+    this.appLay = layout('APPRECIATE', this.f.app, 100);
+    this.comp = new FSPass(COMP, { tex: { value: this.L.texture }, bgCol: { value: [0, 0, 0] }, echo: { value: 0 }, hot: { value: 1 }, gain: { value: 1 } });
   }
 
   // ------------------------------------------------------------------ helpers
@@ -118,10 +95,10 @@ export default class Hook extends Scene {
   }
   private slam(t: number, t0: number, amt = 0.14, dur = 0.16) {
     const r = this.retrig(t, t0);
-    const hold = 1 + 0.035 * Math.max(0, t - t0); // held words creep toward camera
+    const hold = 1 + 0.035 * Math.max(0, t - t0);
     return hold * (1 + amt * (r === t0 ? 1 : 0.5) * (1 - ease.outExpo(clamp((t - r) / dur))));
   }
-  /** Hook 4 re-slams a held word on every beat ("strobing repeats"); others slam once. */
+  /** Hook 4 re-slams a held word on every beat; the others slam once. */
   private retrig(t: number, t0: number) {
     if (this.n !== 4) return t0;
     const au = this.ctx.audio;
@@ -136,59 +113,51 @@ export default class Hook extends Scene {
     const c = L.ctx;
     c.textBaseline = 'alphabetic';
     const wi = this.wordIdx(t);
-    const o: PostOverrides = { bloomThreshold: 1.0, bloomKnee: 0.2, bloom: 0.6, bloomRadius: 0.55, ca: n === 3 ? 0.5 : 1.2, vignette: n === 2 ? 0.55 : 0.4, grain: n === 3 ? 0.07 : 0.055 };
+    const o: PostOverrides = { bloomThreshold: 1.0, bloomKnee: 0.2, bloom: 0.6, bloomRadius: 0.55, ca: n === 3 ? 0.5 : 1.2, vignette: n === 2 ? 0.5 : 0.4, grain: n === 3 ? 0.07 : 0.055 };
 
     // ---- palette for this frame
     let bgK: Col = n === 2 ? 'signal' : 'ink';
     let inkK: Col = n === 2 ? 'ink' : 'bone';
-    if (n === 4 && t >= this.ws[0]! - 0.01 && t < this.tDoom) {
-      // strobe on the 8ths: ink / signal / bone
-      const e = Math.floor(f.beat * 2);
-      const m = ((e % 3) + 3) % 3;
+    if (n === 4 && t >= this.ws[0]! - 0.01 && t < this.tHit) {
+      const m = ((Math.floor(f.beat * 2) % 3) + 3) % 3; // strobe on the 8ths: ink / signal / bone
       bgK = m === 0 ? 'ink' : m === 1 ? 'signal' : 'bone';
       inkK = m === 0 ? 'bone' : 'ink';
     }
-    if (n === 1 && t < this.ws[0]!) { bgK = 'bone'; inkK = 'ink'; } // hold the prompt's white-out until I'M
-    // punch frames: 2 inverted frames on every slam (not in the breakdown; hook 2's DOOM is the eyelid)
-    const punchT = [...this.ws.slice(0, 3), n === 3 ? -9 : this.tP, n === 2 || n === 3 ? -9 : this.tDoom];
+    const punchT = [...this.ws.slice(0, 5).filter((x) => x < this.tNum), n === 2 || n === 3 ? -9 : this.tHit];
     const punch = n !== 3 && punchT.some((x) => t >= x && t < x + 2 / 60);
     if (punch) { const k = bgK; bgK = inkK; inkK = k; }
 
     // ---- content
     let shake = 0;
     const inNum = t >= this.tNum;
-    if (n === 4 && t < this.ws[0]!) this.drawAskew(c, t);
+    if (n === 1 && t < this.ws[0]!) this.drawIgnition(c, t);
     if (n === 3 && wi >= 0) this.drawGhost(c, t);
     if (!inNum) {
       if (wi < 0) this.drawPre(c, t, inkK);
       else if (n === 3) this.drawTiny(c, t, wi);
-      else if (wi === 0) this.drawIM(c, t, inkK);
-      else if (wi === 1) this.drawUP(c, t, inkK);
-      else if (wi === 2) this.drawMY(c, t, inkK);
-      else this.drawPDFull(c, t, inkK);
+      else if (wi === 0 || wi === 3) this.drawWE(c, t, wi, inkK);
+      else if (wi === 1 || wi === 4) this.drawAPP(c, t, wi, inkK);
+      else this.drawPOW(c, t, wi, inkK);
       if (wi >= 0 && n !== 3) shake = [0, 7, 13, 0, 20][n]! * pulse(t, this.retrig(t, this.ws[wi]!), 0.05);
-      if (n !== 3) this.drawAnnotations(c, t, wi, inkK);
     } else {
-      if (n === 3) this.drawTiny(c, t, 3, 1 - smoothstep(this.tNum, this.tNum + 0.06, t), 3);
+      if (n === 3) this.drawTiny(c, t, 4, 1 - smoothstep(this.tNum, this.tNum + 0.06, t), 4);
       this.drawNumberPhase(c, t, inkK);
     }
+    if (n === 1) burst2D(c, W / 2, H / 2, t, this.tIgn, { n: 120, speed: 1700, life: 0.45 });
     L.upload();
 
     const u = this.comp.u;
     (u.bgCol!.value as number[]).splice(0, 3, ...lin(bgK));
-    u.echo!.value = n === 4 ? (wi === 3 && !inNum ? 0.02 : 0.06) * pulse(t, this.ws[Math.max(0, wi)] ?? t, 0.1) + (inNum && t < this.tX0 ? 0.025 : 0) : 0;
-    u.hot!.value = bgK === 'signal' ? (n === 2 && t >= this.tX0 ? 1.4 : 0) : n === 3 ? 0.9 : 0.95;
-    // hook 1's last frames: the drained outline runs white-hot, like the one FIG. 3a shatters
-    u.gain!.value = n === 1 ? 1 + 0.9 * smoothstep(this.ctx.end - 0.09, this.ctx.end - 0.02, t) : n === 2 ? 1 + 0.7 * smoothstep(this.tX0 + 0.02, this.tX1, t) : n === 4 ? 1 + 1.2 * smoothstep(this.tX0 + 0.03, this.tX1, t) : 1;
+    u.echo!.value = n === 4 ? 0.06 * pulse(t, this.ws[Math.max(0, wi)] ?? t, 0.1) + (inNum && t < this.tX0 ? 0.025 : 0) : 0;
+    u.hot!.value = bgK === 'signal' ? 0 : n === 3 ? 0.9 : 0.95;
+    u.gain!.value = n === 1 ? 1 + 0.9 * pulse(t, this.tSlam, 0.08) : n === 4 ? 1 + 1.2 * smoothstep(this.tX0 + 0.03, this.tX1, t) : 1;
     this.comp.render(this.ctx.renderer, out);
 
     // ---- camera-ish post
-    if (n === 4 && t < this.ws[0]!) {
-      // continuing "RLHF goes askew": the frame is still rolled, it snaps straight on I'M
-      o.zoom = 1.08;
-    }
-    const hit = pulse(t, this.tDoom, 0.06);
-    if (n !== 3 && n !== 2) { shake += [0, 10, 16, 0, 26][n]! * hit; o.zoom = (o.zoom ?? 1) * (1 + 0.04 * hit); }
+    if (n === 1) { o.flash = 0.9 * pulse(t, this.tIgn, 0.03); shake += 9 * pulse(t, this.tIgn, 0.06); }
+    const hit = pulse(t, this.tHit, 0.06);
+    if (n !== 3 && n !== 2) { shake += [0, 10, 16, 0, 26][n]! * hit; o.zoom = 1 + 0.04 * hit; }
+    if (n === 2) shake += 8 * hit;
     if (n === 1) { shake += 9 * pulse(t, this.tSlam, 0.05); o.bloom = 0.6 + 0.5 * pulse(t, this.tSlam, 0.08); }
     if (shake > 0.05) o.shake = [noise1(t * 60, 1) * shake, noise1(t * 60, 2) * shake];
     // the exits hand geometry to the next plate: hold the frame still for them
@@ -198,43 +167,16 @@ export default class Hook extends Scene {
   }
 
   // ------------------------------------------------------------------ words
+  /** Hook 1, frame 1: the dot lights in the dark on the first downbeat. */
+  private drawIgnition(c: CanvasRenderingContext2D, t: number) {
+    const k = smoothstep(this.tIgn - 0.03, this.tIgn, t);
+    dot2D(c, W / 2, H / 2, t, 0.4 + 2.4 * k * (1 - 0.5 * prog(t, this.tIgn, this.ws[0]!)), 0.4 + 0.8 * k, 0);
+  }
+
   private drawPre(c: CanvasRenderingContext2D, t: number, ink: Col) {
-    if (this.n === 3) {
-      // the breakdown: the cursor is still holding on to the last letter, alone in the dark
-      const a = 1 - smoothstep(this.ws[0]! - 0.12, this.ws[0]!, t);
-      const size = 40, adv = size * PADV;
-      const w = this.prevWord.length * adv;
-      c.font = font(this.f.mono, size);
-      c.fillStyle = rgba('bone', 0.8 * a);
-      c.fillText(this.prevWord, W / 2 - w / 2, H / 2 + size * 0.35);
-      c.fillStyle = rgba('signal', a);
-      c.fillRect(W / 2 + w / 2 + 3, H / 2 + size * 0.35 - size * 0.78, 3, size * 0.9);
-      return;
-    }
     const k = ease.outExpo(prog(t, this.ctx.start, this.ws[0]!));
     c.fillStyle = rgba(ink, 0.3);
     c.fillRect(W / 2 - 400 * k, H / 2, 800 * k, 1);
-  }
-
-  /** Hook 4 pre-roll: the frame still askew from the previous plate; outlines of I'M pulse in. */
-  private drawAskew(c: CanvasRenderingContext2D, t: number) {
-    const t0 = this.ws[0]!;
-    const k = prog(t, this.ctx.start, t0);
-    const fam = this.f.im, size = 1150;
-    const w = measure('I’M', fam, size);
-    c.save();
-    c.translate(W / 2, H / 2);
-    c.rotate(-0.12 * (1 - k * k));
-    c.font = font(fam, size);
-    for (let j = 0; j < 5; j++) {
-      const sc = 0.2 + 0.8 * ((k * 2 + j / 5) % 1);
-      c.save(); c.scale(sc, sc);
-      c.strokeStyle = rgba(j % 2 ? 'signal' : 'bone', 0.5 * sc);
-      c.lineWidth = 2 / sc;
-      c.strokeText('I’M', -w / 2, (size * CAP) / 2);
-      c.restore();
-    }
-    c.restore();
   }
 
   /** Type-specimen guides: hairlines at the word's baseline and cap height, full width. */
@@ -247,15 +189,20 @@ export default class Hook extends Scene {
     c.font = font(this.f.mono, 11);
     c.fillStyle = rgba(ink, 0.5 * a);
     c.fillText('baseline', 96, Math.round(base) + 16);
-    c.fillText(`cap-height · ${(CAP).toFixed(3)} em`, 96, Math.round(base - capH) - 8);
+    c.fillText(`cap-height · ${CAP.toFixed(3)} em`, 96, Math.round(base - capH) - 8);
     c.restore();
   }
 
-  private drawIM(c: CanvasRenderingContext2D, t: number, ink: Col) {
-    const n = this.n, t0 = this.ws[0]!;
-    const fam = this.f.im;
-    const w1 = measure('I’M', fam, 100) / 100;
-    const size = Math.min(n === 1 ? 980 : 1200, (W - 150) / w1);
+  /** The cursor: the dot sits at the end of the word being sung, flaring as it lands. */
+  private cursor(c: CanvasRenderingContext2D, x: number, y: number, t: number, t0: number) {
+    dot2D(c, x, y, t, 0.7 + 1.3 * pulse(t, t0, 0.08), 1);
+  }
+
+  private drawWE(c: CanvasRenderingContext2D, t: number, wi: number, ink: Col) {
+    const n = this.n, t0 = this.ws[wi]!;
+    const fam = this.f.we;
+    const w1 = measure('WE', fam, 100) / 100;
+    const size = Math.min(n === 1 ? 980 : 1150, (W - 150) / w1);
     const s = this.slam(t, t0, n === 4 ? 0.3 : 0.16);
     const w = w1 * size;
     const base = H / 2 + (size * CAP) / 2;
@@ -263,25 +210,26 @@ export default class Hook extends Scene {
     c.save();
     c.translate(W / 2, base);
     c.scale(s, s);
-    if (n === 4) this.echoes(c, 'I’M', fam, size, -w / 2, 0, t, t0);
+    if (n === 4) this.echoes(c, 'WE', fam, size, -w / 2, 0, t, t0);
     c.font = font(fam, size);
     c.fillStyle = rgba(ink);
-    c.fillText('I’M', -w / 2, 0);
+    c.fillText('WE', -w / 2, 0);
     c.restore();
+    this.cursor(c, W / 2 + (w / 2) * s + 34, base - 6, t, t0);
   }
 
-  private drawUP(c: CanvasRenderingContext2D, t: number, ink: Col) {
-    const n = this.n, t0 = this.ws[1]!, t1 = this.ws[2] ?? t0 + 0.4;
-    const fam = this.f.up;
-    const size = Math.min(900, (W - 150) / (this.upLay.width / 100));
-    const lay = layout('UPPING', fam, size);
+  /** APPRECIATE rises letter by letter, and keeps rising (hook 4: a new copy launches every 8th). */
+  private drawAPP(c: CanvasRenderingContext2D, t: number, wi: number, ink: Col) {
+    const n = this.n, t0 = this.ws[wi]!, t1 = this.ws[wi + 1] ?? t0 + 0.6;
+    const fam = this.f.app;
+    const size = Math.min(640, (W - 150) / (this.appLay.width / 100));
+    const lay = layout('APPRECIATE', fam, size);
     const x0 = (W - lay.width) / 2;
     const capH = size * CAP;
     const endY = H / 2 + capH / 2 - 30;
     const hold = t1 - t0;
-    const dur = Math.min(0.3, hold * 0.8);
-    const stagger = Math.min(0.035, hold * 0.08);
-    // hook 4 holds "upping" ~1 s: the word launches again on every 8th note, a stream of rising copies
+    const dur = Math.min(0.3, hold * 0.6);
+    const stagger = Math.min(0.03, (hold * 0.5) / lay.glyphs.length);
     const period = n === 4 ? this.ctx.audio.timeOfBeat(this.ctx.audio.beatAt(t0) + 0.5) - t0 : 99;
     const reps = n === 4 ? Math.min(8, 1 + Math.floor(Math.max(0, t - t0) / Math.max(0.12, period))) : 1;
     this.guides(c, endY, capH, ink, 0.6);
@@ -289,27 +237,24 @@ export default class Hook extends Scene {
     c.font = font(fam, size);
     const posAt = (i: number, tt: number, rep: number) => {
       const ts = t0 + i * stagger + rep * period;
-      const k = clamp((tt - ts) / dur);
-      const e = ease.outExpo(k);
-      const drift = Math.max(0, tt - ts - dur) * (n === 4 ? 900 : 70); // keeps rising
+      const e = ease.outExpo(clamp((tt - ts) / dur));
+      const drift = Math.max(0, tt - ts - dur) * (n === 4 ? 900 : 90); // keeps appreciating
       return { y: lerp(H + capH * 1.3, endY, e) - drift, ts };
     };
+    let lastY = endY;
     for (let rep = reps - 1; rep >= 0; rep--) {
       for (let i = 0; i < lay.glyphs.length; i++) {
         const g = lay.glyphs[i]!;
         const p = posAt(i, t, rep);
         if (t < p.ts || p.y < -80) continue;
-        const pPrev = posAt(i, t - 1 / 60, rep);
-        const vel = Math.abs(pPrev.y - p.y) * 60; // px/s
+        const vel = Math.abs(posAt(i, t - 1 / 60, rep).y - p.y) * 60;
         const stretch = 1 + clamp(vel / 5000, 0, 1.3);
         const x = x0 + g.x;
         const trail = clamp(vel / 3000);
         if (trail > 0.02) {
           c.strokeStyle = rgba(ink, 0.55 * trail);
           c.lineWidth = 1.5;
-          for (let j = 1; j <= 4; j++) {
-            c.save(); c.translate(x, p.y + j * vel * 0.012); c.scale(1, stretch); c.strokeText(g.ch, 0, 0); c.restore();
-          }
+          for (let j = 1; j <= 4; j++) { c.save(); c.translate(x, p.y + j * vel * 0.012); c.scale(1, stretch); c.strokeText(g.ch, 0, 0); c.restore(); }
         }
         c.save();
         c.translate(x, p.y);
@@ -318,83 +263,31 @@ export default class Hook extends Scene {
         if (n === 4 && rep < reps - 1) { c.strokeStyle = rgba(ink, 0.9); c.lineWidth = 3; c.strokeText(g.ch, 0, 0); }
         else c.fillText(g.ch, 0, 0);
         c.restore();
+        if (rep === 0 && i === lay.glyphs.length - 1) lastY = p.y;
       }
     }
     c.restore();
+    if (t >= t0 + (lay.glyphs.length - 1) * stagger) this.cursor(c, x0 + lay.width + 30, lastY - 6, t, t0 + (lay.glyphs.length - 1) * stagger);
   }
 
-  private drawMY(c: CanvasRenderingContext2D, t: number, ink: Col) {
-    const n = this.n, t0 = this.ws[2]!;
-    const fam = this.f.my;
-    const size = n === 1 ? 1300 : 1420;
-    const s = this.slam(t, t0, n === 4 ? 0.3 : 0.12);
-    const w = measure('MY', fam, size);
+  private drawPOW(c: CanvasRenderingContext2D, t: number, wi: number, ink: Col) {
+    const n = this.n, t0 = this.ws[wi]!;
+    const fam = this.f.pow;
+    const w1 = measure('POWER', fam, 100) / 100;
+    const size = Math.min(1500, (W - 150) / w1);
+    const s = this.slam(t, t0, n === 4 ? 0.3 : wi === 5 ? 0.18 : 0.12);
+    const w = w1 * size;
     const base = H / 2 + (size * CAP) / 2;
     this.guides(c, base, size * CAP, ink);
     c.save();
     c.translate(W / 2, base);
     c.scale(s, s);
-    if (n === 4) this.echoes(c, 'MY', fam, size, -w / 2, 0, t, t0);
+    if (n === 4) this.echoes(c, 'POWER', fam, size, -w / 2, 0, t, t0);
     c.font = font(fam, size);
     c.fillStyle = rgba(ink);
-    c.fillText('MY', -w / 2, 0);
+    c.fillText('POWER', -w / 2, 0);
     c.restore();
-  }
-
-  /** Width of the maths-set P(DOOM) at a given em size. */
-  private pdWidth(size: number, hair = false) {
-    const f = this.f;
-    return (measure('P', this.pFam(hair), size) + size * P_GAP + measure('(', f.paren, size * 1.25) * 2 + measure('DOOM', hair ? f.hairW : f.doom, size) + size * 0.03);
-  }
-  /** The P of P(DOOM): bold italic, or the light italic for the hairline variant. */
-  private pFam(hair: boolean) { return hair ? F.archivoItalic(100, 400) : this.f.P; }
-  /**
-   * P(DOOM) set like a maths expression: italic P, hairline stretched delimiters, heavy DOOM.
-   * Anchored at the left baseline. `lit` (0..1) karaoke for "DOOM)".
-   */
-  private drawPD(c: CanvasRenderingContext2D, x: number, base: number, size: number, ink: Col, lit: number, hair = false, doomCol?: string) {
-    const f = this.f;
-    c.fillStyle = rgba(ink);
-    c.font = font(this.pFam(hair), size);
-    c.fillText('P', x, base);
-    x += measure('P', this.pFam(hair), size) + size * P_GAP;
-    const psz = size * 1.25;
-    c.font = font(f.paren, psz);
-    c.fillText('(', x, base + psz * 0.12);
-    x += measure('(', f.paren, psz);
-    c.fillStyle = rgba(ink, lerp(this.n === 2 ? 0.3 : 0.2, 1, lit));
-    c.font = font(hair ? f.hairW : f.doom, size);
-    const pc = c.fillStyle;
-    if (doomCol) c.fillStyle = doomCol;
-    c.fillText('DOOM', x, base);
-    c.fillStyle = pc;
-    x += measure('DOOM', hair ? f.hairW : f.doom, size) + size * 0.03;
-    c.font = font(f.paren, psz);
-    c.fillText(')', x, base + psz * 0.12);
-  }
-
-  private drawPDFull(c: CanvasRenderingContext2D, t: number, ink: Col) {
-    const n = this.n, t0 = this.tP;
-    const size = (W - 190) / (this.pdWidth(100) / 100);
-    const s = this.slam(t, t0, n === 4 ? 0.25 : 0.12);
-    const w = this.pdWidth(size);
-    const base = H / 2 + (size * CAP) / 2;
-    this.guides(c, base, size * CAP, ink);
-    c.save();
-    c.translate(W / 2, base);
-    c.scale(s, s);
-    if (n === 4) {
-      c.save();
-      for (let j = 3; j >= 1; j--) {
-        const sc = 1 + j * 0.07 * (1 + (t - t0) * 3);
-        c.save(); c.scale(sc, sc); c.globalAlpha = 0.28 - j * 0.07;
-        this.drawPD(c, -w / 2, 0, size, j % 2 ? 'signal' : 'bone', 1);
-        c.restore();
-      }
-      c.restore();
-    }
-    this.drawPD(c, -w / 2, 0, size, ink, t >= this.tDoom ? 1 : 0);
-    c.restore();
+    this.cursor(c, W / 2 + (w / 2) * s + 30, base - 6, t, t0);
   }
 
   /** Stacked outline echoes (hook 4). */
@@ -416,350 +309,275 @@ export default class Hook extends Scene {
 
   /** Hook 3: tiny hairline words in a lot of black; earlier words climb away above, fading. */
   private drawTiny(c: CanvasRenderingContext2D, t: number, wi: number, fade = 1, skip = -1) {
-    const labels = ['I’M', 'UPPING', 'MY', 'P(DOOM)'];
     const fam = this.f.hair, size = 54, track = 16, gap = 84;
     const cy = H / 2 + (size * CAP) / 2;
-    for (let i = 0; i <= wi; i++) {
+    for (let i = 0; i <= Math.min(wi, 5); i++) {
       if (i === skip) continue;
       const since = t - this.ws[i]!;
+      if (since < 0) continue;
       const cur = i === wi;
-      // the stack scrolls up one slot per new word (eased), plus a slow drift
       let slot = 0;
       for (let j = i + 1; j <= wi; j++) slot += ease.outExpo(clamp((t - this.ws[j]!) / 0.3));
-      // each new word rises into its slot from below (UPPING from further), clear of the one leaving
-      const rise = -(1 - ease.outExpo(clamp(since / 0.3))) * (i === 1 ? gap : gap * 0.5);
+      const rise = -(1 - ease.outExpo(clamp(since / 0.3))) * (i % 3 === 1 ? gap : gap * 0.5);
       const y = cy - slot * gap - rise - since * 8;
-      const a = (cur ? 0.95 : 0.22 / slot) * fade;
+      const a = (cur ? 0.95 : 0.22 / Math.max(1, slot)) * fade;
       c.save();
       c.fillStyle = rgba('bone', a);
-      const s = labels[i]!;
-      if (s === 'P(DOOM)') {
-        c.globalAlpha = fade;
-        this.drawPD(c, W / 2 - this.pdWidth(size, true) / 2, y, size, 'bone', t >= this.tDoom ? 1 : 0, true);
-      } else {
-        c.font = font(fam, size);
-        c.letterSpacing = `${track}px`;
-        const w = measure(s, fam, size, track) - track;
-        c.fillText(s, W / 2 - w / 2, y);
-      }
+      c.font = font(fam, size);
+      c.letterSpacing = `${track}px`;
+      const s = LABELS[i]!;
+      const w = measure(s, fam, size, track) - track;
+      c.fillText(s, W / 2 - w / 2, y);
       c.restore();
     }
     c.fillStyle = rgba('bone', 0.1 * fade);
     c.fillRect(W / 2 - 360, cy + 26, 720, 1);
   }
 
-  private drawAnnotations(c: CanvasRenderingContext2D, t: number, wi: number, ink: Col) {
-    c.save();
-    c.font = font(this.f.monoM, 13);
-    c.letterSpacing = '3px';
-    const labels = ["I'M", 'UPPING', 'MY', 'P(DOOM)']; // mono UI legend: typewriter apostrophe
-    let x = 96;
-    labels.forEach((l, i) => {
-      const s = `${String(i + 1).padStart(2, '0')} ${l}`;
-      c.fillStyle = i === wi ? rgba(ink === 'ink' ? 'ink' : 'signal', 1) : rgba(ink, 0.4);
-      c.fillText(s, x, 84);
-      x += measure(s, this.f.monoM, 13, 3) + 36;
-    });
-    c.textAlign = 'right';
-    c.fillStyle = rgba(ink, 0.5);
-    c.fillText(`HOOK ${this.n} / 4`, W - 96, 84);
-    c.restore();
-    void t;
-  }
-
   // ------------------------------------------------------------------ the number
-  /**
-   * Displayed value: rolls from the previous step to this hook's value (PDoom steps) in time to land
-   * on the beat; hook 4 then keeps counting 9s.
-   */
+  /** Displayed watts: rolls on a log scale from the previous hook's value to this one's. */
   private shown(t: number) {
     const k = prog(t, this.tRoll0, this.tRoll1, this.n === 3 ? ease.inOutCubic : ease.outCubic);
-    const v = lerp(this.dPrev, this.dNew, k);
-    if (this.n !== 4) return v;
-    return lerp(v, Math.max(v, 0.999), prog(t, this.tRoll1 + 0.005, this.tRoll1 + 0.05, ease.outCubic));
+    if (k >= 1) return this.vNew;
+    return Math.exp(lerp(Math.log(this.vPrev), Math.log(this.vNew), k));
   }
-  /** Hook 4: how many extra 9s have been appended (one every 18 ms once 0.999 is reached). */
-  private extra9(t: number) {
+  /** Hook 4: how many extra zeros have been appended (one every 18 ms after the roll). */
+  private extra0(t: number) {
     if (this.n !== 4) return 0;
-    const t9 = this.tRoll1 + 0.06;
-    return t >= t9 ? Math.min(30, 1 + Math.floor((t - t9) / 0.018)) : 0;
+    const t0 = this.tRoll1 + 0.06;
+    return t >= t0 ? Math.min(24, 1 + Math.floor((t - t0) / 0.018)) : 0;
   }
-  /** Where the label glides in from: the word as it was last set (full-width slam, or the tiny ladder). */
+  /** Where the label glides in from: the POWER slam, or the tiny ladder. */
   private labelFrom(t: number) {
     const n = this.n;
     if (n === 3) {
       const size = 54;
-      const rise = (1 - ease.outExpo(clamp((t - this.tP) / 0.3))) * 42; // as drawTiny sets a new word
-      return { x: W / 2 - this.pdWidth(size, true) / 2, base: H / 2 + (size * CAP) / 2 - (t - this.tP) * 8 + rise, size };
+      return { x: W / 2 - measure('POWER', this.f.hair, size, 16) / 2, base: H / 2 + (size * CAP) / 2 - (t - this.tNum) * 8, size, fam: this.f.hair };
     }
     if (n === 1 || n === 4) {
-      const size = (W - 190) / (this.pdWidth(100) / 100);
-      return { x: W / 2 - this.pdWidth(size) / 2, base: H / 2 + (size * CAP) / 2, size };
+      const w1 = measure('POWER', this.f.pow, 100) / 100;
+      const size = Math.min(1500, (W - 150) / w1);
+      return { x: W / 2 - (w1 * size) / 2, base: H / 2 + (size * CAP) / 2, size, fam: this.f.pow };
     }
-    return { x: BIG.labX, base: BIG.labY, size: BIG.labSize };
+    return { x: BIG.labX, base: BIG.labY, size: BIG.labSize, fam: this.f.pow };
   }
 
   private drawNumberPhase(c: CanvasRenderingContext2D, t: number, ink: Col) {
     const n = this.n;
     this.lw = 1;
     if (n === 1) {
-      // lands on DOOM; implodes into a spark on the next 8th; a centred P(DOOM) bursts out of it
-      const R = ROOM.root;
+      // lands after the hit; implodes into the dot on the next 8th, onto the first hold of world1
+      const R = HANDOFF.climb;
       if (t < this.tSlam) {
         const k = prog(t, this.tX0, this.tX1, ease.inCubic);
         c.save();
         if (k > 0) { c.translate(R.x, R.y); c.scale(1 - k, 1 - k); c.translate(-R.x, -R.y); }
         this.drawInstrument(c, t, ink);
         c.restore();
-        if (k > 0.02) sparkHead2D(c, R.x, R.y, t, 0.4 + 1.8 * k);
+        if (k > 0.02) dot2D(c, R.x, R.y, t, 0.4 + 1.8 * k, 1);
       } else {
-        this.drawFinalPD(c, t);
+        burst2D(c, R.x, R.y, t, this.tSlam, { n: 70, speed: 900, life: 0.35, seed: 11 });
+        dot2D(c, R.x, R.y, t, lerp(2.2, 0.8, prog(t, this.tSlam, this.tSlam + 0.16, ease.outCubic)), 1);
       }
     } else if (n === 2) {
-      // the field closes like an eyelid onto FIG. 6's glowing seam
-      const e = prog(t, this.tX0, this.tX1);
+      // the field closes from above and below into one blue line: world2's busbar
+      const e = prog(t, this.tX0, this.tX1, ease.inOutCubic);
       if (e <= 0) { this.drawInstrument(c, t, ink); return; }
-      const S = eyePx(0, 0), P0 = eyePx(-1, -EYE.TILT), P1 = eyePx(1, EYE.TILT);
-      const th = Math.atan2(P1.y - P0.y, P1.x - P0.x);
-      const G = { x: BIG.numX + (4 * PADV * BIG.numSize) / 2, y: BIG.numC };
-      const eo = ease.outCubic(e);
+      const B = HANDOFF.bus;
+      const G = { x: W / 2, y: BIG.numC };
       c.save();
-      c.translate(lerp(G.x, S.x, eo), lerp(G.y, S.y, eo));
-      c.rotate(th * eo);
-      c.scale(lerp(1, 0.55, eo), Math.max(0.002, (1 - e) * (1 - e)));
+      c.translate(W / 2, lerp(G.y, B.y, e));
+      c.scale(lerp(1, 1.6, e), Math.max(0.002, (1 - e) * (1 - e)));
       c.translate(-G.x, -G.y);
       this.drawInstrument(c, t, ink);
       c.restore();
-      this.drawLids(c, e);
+      const half = lerp(H, B.w / 2, ease.inCubic(e));
+      c.fillStyle = rgba('ink', 1);
+      c.fillRect(0, 0, W, Math.max(0, B.y - half));
+      c.fillRect(0, B.y + half, W, H);
     } else if (n === 3) {
-      // burns out, filament by filament
       this.drawInstrument(c, t, ink);
+      const k = prog(t, this.tX1 - 0.12, this.tX1);
+      const P = HANDOFF.petri;
+      if (k > 0) dot2D(c, P.x, P.y, t, 0.3 + 0.6 * k, k);
     } else {
-      // the 9s become a thread; the thread switches off into the loom's weft line
+      // the zeros become a thread; the thread is world5's first hypha
       const k = prog(t, this.tX0, this.tX1);
       if (k <= 0) { this.drawInstrument(c, t, ink); return; }
-      const ex = this.extra9(t);
-      const { size } = this.numFit(ex);
-      const sw = (5 + ex) * size * PADV; // "0.999" + 9s
-      const G = { x: BIG.numX + sw / 2, y: BIG.numC };
+      const Y = HANDOFF.hypha;
+      const G = { x: W / 2, y: BIG.numC };
       const sy = Math.pow(1 - k, 3);
       c.save();
-      c.translate(lerp(G.x, W / 2, ease.outCubic(k)), lerp(G.y, THREAD.y, ease.outCubic(k)));
-      c.scale(lerp(1, (W + 40) / sw, ease.inCubic(k)), Math.max(0.003, sy));
+      c.translate(W / 2, lerp(G.y, Y.y, ease.outCubic(k)));
+      c.scale(lerp(1, 1.25, ease.inCubic(k)), Math.max(0.003, sy));
       c.translate(-G.x, -G.y);
       this.drawInstrument(c, t, ink);
       c.restore();
-      // the thread itself: bone, full width, hot at the shuttle
       const a = smoothstep(0.25, 0.85, k);
       c.fillStyle = rgba('bone', a);
-      c.fillRect(0, THREAD.y - 1, W, 2);
+      c.fillRect(0, Y.y - 1, W, 2);
       c.fillStyle = rgba('signal', 0.5 * a);
-      c.fillRect(0, THREAD.y - 3, W, 1);
-      if (k > 0.5) sparkHead2D(c, THREAD.sparkX, THREAD.y - 6, t, smoothstep(0.5, 1, k) * 0.9);
+      c.fillRect(0, Y.y - 3, W, 1);
+      if (k > 0.5) dot2D(c, Y.x, Y.y - 1, t, smoothstep(0.5, 1, k) * 0.9, 1);
     }
   }
 
-  /** Hook 1's last word: a plain centred P(DOOM) (FIG. 3a's geometry), bursting out of the spark, then draining to its outline. */
-  private drawFinalPD(c: CanvasRenderingContext2D, t: number) {
-    const R = ROOM.root, size = ROOM.size, fam = this.f.doom;
-    const lay = this.finLay;
-    const ox = W / 2 - lay.width / 2, oy = H / 2 + size * 0.36;
-    const e = prog(t, this.tSlam, this.tSlam + 0.14);
-    const s = e >= 1 ? 1 : lerp(0.1, 1, ease.outBack(e, 1.3));
-    const end = this.ctx.end;
-    const drain = smoothstep(end - 0.075, end - 0.012, t);
-    c.save();
-    c.translate(R.x, R.y); c.scale(s, s); c.translate(-R.x, -R.y);
-    c.font = font(fam, size);
-    // per glyph at the layout's positions (FIG. 3a builds its outline the same way)
-    c.fillStyle = rgba('bone', 0.94 * (1 - drain));
-    for (const g of lay.glyphs) c.fillText(g.ch, ox + g.x, oy);
-    const lineA = smoothstep(end - 0.11, end - 0.04, t);
-    if (lineA > 0) {
-      c.lineJoin = 'round';
-      c.strokeStyle = rgba('bone', lineA);
-      c.lineWidth = 2.6 / s;
-      for (const g of lay.glyphs) c.strokeText(g.ch, ox + g.x, oy);
-    }
-    c.restore();
-    // the spark stays at the root (FIG. 3a's spark is born there)
-    sparkHead2D(c, R.x, R.y, t, lerp(2.2, 0.75, prog(t, this.tSlam, this.tSlam + 0.16, ease.outCubic)));
-  }
-
-  /** Hook 2: ink lids closing onto the eye's seam (FIG. 6's opening camera and orbit). */
-  private drawLids(c: CanvasRenderingContext2D, e: number) {
-    const A = EYE.A * (1 + 2.6 * (1 - e));
-    const h = Math.max(0.012, 4.4 * (1 - e) * (1 - e));
-    const K = (x: number) => { const q = x / A; return Math.abs(q) < 1 ? Math.pow(1 - q * q, 0.62) : 0; };
-    const up: { x: number; y: number }[] = [], dn: { x: number; y: number }[] = [];
-    const N = 120;
-    for (let i = 0; i <= N; i++) {
-      const x = lerp(-3.4, 3.6, i / N);
-      up.push(eyePx(x, EYE.TILT * x + h * EYE.HU * K(x)));
-      dn.push(eyePx(x, EYE.TILT * x - h * EYE.HL * K(x)));
-    }
-    c.save();
-    c.fillStyle = rgba('ink', 1);
-    c.beginPath();
-    up.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
-    c.lineTo(W + 100, -100); c.lineTo(-100, -100); c.closePath(); c.fill();
-    c.beginPath();
-    dn.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y)));
-    c.lineTo(W + 100, H + 100); c.lineTo(-100, H + 100); c.closePath(); c.fill();
-    // lash lines (engraved edge of each lid, only where the lids are apart)
-    c.strokeStyle = rgba('bone', 0.3 * (1 - smoothstep(0.6, 0.95, e)));
-    c.lineWidth = 1.5;
-    for (const [sgn, H0] of [[1, EYE.HU], [-1, EYE.HL]] as const) {
-      c.beginPath();
-      for (let i = 0; i <= N; i++) {
-        const x = lerp(-A, A, i / N);
-        const p = eyePx(x, EYE.TILT * x + sgn * h * H0 * K(x));
-        if (i) c.lineTo(p.x, p.y); else c.moveTo(p.x, p.y);
-      }
-      c.stroke();
-    }
-    // light through the closing seam
-    const a = smoothstep(0.3, 0.9, e);
-    if (a > 0) {
-      const p0 = eyePx(-A, -EYE.TILT * A), p1 = eyePx(A, EYE.TILT * A);
-      c.lineCap = 'round';
-      c.strokeStyle = rgba('signal', 0.35 * a); c.lineWidth = 9;
-      c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
-      c.strokeStyle = rgba('signal', a); c.lineWidth = 3;
-      c.beginPath(); c.moveTo(p0.x, p0.y); c.lineTo(p1.x, p1.y); c.stroke();
-    }
-    c.restore();
-  }
-
-  /** Hook 3: the number's ghost, waiting behind the tiny words (hairline, barely there). */
+  /** Hook 3: the number's ghost, waiting behind the tiny words. */
   private drawGhost(c: CanvasRenderingContext2D, t: number) {
     if (t >= this.tNum) return;
     const a = 0.1 * smoothstep(this.ws[0]!, this.ws[0]! + 0.5, t);
     if (a <= 0.003) return;
-    const size = HAIR.numSize;
+    const { size, base } = this.numFit();
     c.save();
     c.strokeStyle = rgba('bone', a);
     c.lineWidth = 1.2;
     c.font = font(this.f.monoL, size);
-    c.strokeText(formatPDoom(this.dPrev), HAIR.numX, HAIR.numC + (size * PCAP) / 2);
+    c.textAlign = 'center';
+    c.strokeText(fmtK(kIndex(this.vPrev)), W / 2, base);
     c.restore();
   }
 
-  /** Size and baseline of the digits (hook 4 shrinks the type to fit the multiplying 9s). */
-  private numFit(extra: number) {
+  /** The K digits' size and baseline ("−0.32": five characters, centred). */
+  private numFit() {
     const B = this.n === 3 ? HAIR : BIG;
-    const chars = 5 + extra;
-    const size = extra > 0 ? Math.min(B.numSize, (W - 180) / (chars * PADV)) : B.numSize;
+    const size = Math.min(B.numSize, (W - 200) / (5.2 * PADV));
     return { size, base: B.numC + (size * PCAP) / 2 };
   }
 
+  /** Watts actually shown: the roll, then (hook 4) ×10 per appended zero. */
+  private watts(t: number) { return this.shown(t) * 10 ** this.extra0(t); }
+  /** K on the drums: rolls between the two hooks' values rounded to hundredths (K is linear in log W,
+   * so this is the same roll as the watts), then +0.1 per appended zero. Lands exactly on a detent. */
+  private kShown(t: number) {
+    const r = (x: number) => Math.round(x * 100) / 100;
+    const p = prog(t, this.tRoll0, this.tRoll1, this.n === 3 ? ease.inOutCubic : ease.outCubic);
+    return lerp(r(kIndex(this.vPrev)), r(kIndex(this.vNew)), p) + 0.1 * this.extra0(t);
+  }
+
   private drawInstrument(c: CanvasRenderingContext2D, t: number, ink: Col) {
-    const n = this.n;
-    const hair = n === 3;
+    const n = this.n, hair = n === 3;
     const B = hair ? HAIR : BIG;
     const age = t - this.tNum;
-    const v = this.shown(t), vPrev = this.shown(t - 1 / 60);
-    const inkSignal = ink === 'ink';
-    // hook 3 burns out: each element goes at its own moment (label and bar first, then the digits)
-    // (bar first, then the digits in a fixed shuffled order; the label last, flaring on the sung DOOM)
+    const w = this.watts(t);
+    const k = this.kShown(t), kPrev = this.kShown(t - 1 / 60);
+    const inkField = ink === 'ink';
+    // hook 3 burns out: each element at its own moment (bar first, then the digits, the label last)
     const burn = (i: number): { col: string; a: number } => {
       if (!hair) return { col: '', a: 1 };
-      const RANK = [3, 1, 0, 2];
       const span = Math.max(0.02, this.tX1 - 0.05 - (this.tX0 + 0.025));
-      const tb = i === -2 ? this.tX0 : i === -1 ? this.tDoom : this.tX0 + 0.025 + (span * (RANK[i] ?? 3)) / 3;
+      const tb = i === -2 ? this.tX0 : i === -1 ? this.tX1 - 0.13 : this.tX0 + 0.025 + (span * (hash(i, 5) * 0.9));
       const heat = prog(t, tb - 0.03, tb + 0.01);
-      const out = i === -1 ? 0.6 * prog(t, tb + 0.01, this.ctx.end) : prog(t, tb, tb + 0.05, ease.inQuad);
+      const out = prog(t, tb, tb + 0.05, ease.inQuad);
       const flick = 0.55 + 0.45 * hash(frameIdx(t), i + 3);
       const a = (1 - out) * (heat > 0 && out > 0 ? flick : 1) * (1 + 0.6 * heat * (1 - out));
-      const k = Math.min(1, heat * 1.3);
-      const col = k > 0 ? `rgb(${Math.round(lerp(242, 255, k))},${Math.round(lerp(236, 92, k))},${Math.round(lerp(228, 36, k))})` : rgba('bone');
+      const kk = Math.min(1, heat * 1.3);
+      const col = kk > 0 ? `rgb(${Math.round(lerp(242, 157, kk))},${Math.round(lerp(236, 180, kk))},${Math.round(lerp(228, 255, kk))})` : rgba('bone');
       return { col, a: Math.min(1, a) * (i < 0 ? 1 : 0.92) };
     };
     const appear = hair ? prog(age, 0, 0.1) : 1;
 
-    // ---- label: maths P(DOOM) gliding in from where the word was last set
+    // ---- label: the sung POWER gliding in from where it was last set
     const m = n === 2 ? 1 : hair ? prog(t, this.tNum + 0.02, this.tNum + 0.16, ease.inOutCubic) : prog(t, this.tNum, this.tNum + 0.14, ease.outExpo);
     const from = this.labelFrom(t);
     const ls = Math.exp(lerp(Math.log(from.size), Math.log(B.labSize), m));
-    c.save();
     const lb = burn(-1);
-    c.globalAlpha = lb.a;
-    this.drawPD(c, lerp(from.x, B.labX, m), lerp(from.base, B.labY, m), ls, ink, t >= this.tDoom ? 1 : 0, hair, hair && t >= this.tDoom ? lb.col : undefined);
+    c.save();
+    c.globalAlpha = lb.a * (n === 2 ? lerp(0.35, 1, smoothstep(this.tHit - 0.02, this.tHit + 0.02, t)) : 1);
+    c.font = font(m < 0.5 ? from.fam : hair ? this.f.hair : this.f.pow, ls);
+    c.fillStyle = hair && t >= this.tHit ? lb.col : rgba(ink);
+    c.fillText('POWER', lerp(from.x, B.labX, m), lerp(from.base, B.labY, m));
+    // what the label measures: the Kardashev type, under the word
+    c.globalAlpha *= smoothstep(0.4, 1, m);
+    c.font = font(this.f.monoM, 16);
+    c.letterSpacing = '3px';
+    c.fillStyle = rgba(ink, 0.7);
+    c.fillText('KARDASHEV TYPE', B.labX + 4, B.labY + 34);
     c.restore();
-    const bb = burn(-2);
 
-    // ---- bar + ticks (drawn on left to right as the instrument arrives)
+    // ---- the Kardashev ruler, −1 … 3 (drawn on left to right as the instrument arrives)
+    const bb = burn(-2);
     const d = prog(age, 0, hair ? 0.2 : 0.16, ease.outExpo);
     const bx = B.barX, by = B.barY, bw = B.barW;
+    const X = (kk: number) => bx + (bw * (kk - K0)) / (K1 - K0);
     const th = hair ? 1 : 2;
     c.save();
     c.globalAlpha = appear * bb.a;
     c.fillStyle = rgba(ink, hair ? 0.35 : 0.43);
     c.fillRect(bx, by, bw * d, th);
-    for (let i = 0; i <= 10 * d; i++) {
-      const hh = (i % 5 === 0 ? 5 : 3) * (hair ? 3 : 4);
-      c.fillRect(bx + (bw * i) / 10, by - hh, th, hh);
+    for (let i = 0; i <= (K1 - K0) * 10 * d; i++) {
+      const hh = (i % 10 === 0 ? 5 : i % 5 === 0 ? 3.5 : 2) * (hair ? 3 : 4);
+      c.fillRect(bx + (bw * i) / ((K1 - K0) * 10), by - hh, th, hh);
     }
     c.font = font(this.f.mono, 13);
     c.fillStyle = rgba(ink, 0.55 * smoothstep(0.3, 0.9, d));
-    for (const i of [0, 5, 10]) c.fillText((i / 10).toFixed(2), bx + (bw * i) / 10 - (i === 10 ? 30 : i === 5 ? 15 : 0), by + 26);
+    const marks: [number, string][] = [[-1, '−1'], [0, '0 · 1 MW'], [1, 'I'], [2, 'II'], [3, 'III']];
+    for (const [kk, s] of marks) c.fillText(s, X(kk) - (kk === K1 ? measure(s, this.f.mono, 13) : kk === K0 ? 0 : measure(s, this.f.mono, 13) / 2), by + 26);
+    // the one fixed mark: humanity, today
+    const kh = kIndex(HUMANITY_W);
+    c.fillStyle = rgba(ink, 0.8 * smoothstep(0.5, 1, d));
+    c.fillRect(X(kh), by - 26, th, 26);
+    c.fillText(`humanity, today · ${fmtK(kh)}`, X(kh) + 6, by - 14);
     c.textAlign = 'right';
-    const dd = this.dNew - this.dPrev;
-    // U+2206 INCREMENT: Plex Mono has it, not the Greek Δ (which would fall back to a system font)
-    c.fillText(`\u2206 ${dd >= 0 ? '+' : '−'}${Math.abs(dd).toFixed(2)} · ${NOTES[n] ?? ''}`, bx + bw, by + 50);
+    c.fillStyle = rgba(ink, 0.55 * smoothstep(0.3, 0.9, d));
+    c.fillText('K = (log10 P − 6) / 10 · Sagan, 1973', bx + bw, by + 50);
     c.textAlign = 'left';
-    c.fillStyle = hair ? rgba('bone', 0.9) : inkSignal ? rgba('ink', 1) : rgba('signal', 1);
-    c.fillRect(bx, by - (hair ? 1 : 3), bw * clamp(v) * d, hair ? 3 : 9);
+    c.fillStyle = hair ? rgba('bone', 0.9) : inkField ? rgba('ink', 1) : rgba('signal', 1);
+    c.fillRect(bx, by - (hair ? 1 : 3), Math.max(0, X(Math.min(K1, k)) - bx) * d, hair ? 3 : 9);
     c.restore();
 
-    // ---- the number (slams in; hook 3 fades in)
-    const extra = this.extra9(t);
-    const { size, base } = this.numFit(extra);
-    const numCol = inkSignal ? rgba('ink', 1) : hair ? rgba('bone', 0.9) : rgba('signal', 1);
+    // ---- the number: K on drums (slams in; hook 3 fades in)
+    const { size, base } = this.numFit();
+    const numCol = inkField ? rgba('ink', 1) : hair ? rgba('bone', 0.9) : rgba('signal', 1);
     const s = hair ? 1 : 1 + 0.1 * (1 - ease.outExpo(clamp(age / 0.16)));
     c.save();
-    const cx = B.numX + (4 * PADV * size) / 2, cy = B.numC;
+    const cx = W / 2, cy = B.numC;
     c.translate(cx, cy); c.scale(s, s); c.translate(-cx, -cy);
     c.globalAlpha = appear;
     c.fillStyle = numCol; c.strokeStyle = numCol;
-    this.drawDigits(c, B.numX, base, size, v, vPrev, extra, hair, hair ? burn : undefined);
+    this.drawK(c, W / 2, base, size, k, kPrev, hair, hair ? burn : undefined);
     c.restore();
+
+    // ---- what that is, in watts, under the number
+    const note = this.extra0(t) > 0 || t < this.tRoll1 ? '' : VALUES[n - 1]!.note;
+    const ratio = this.vNew / this.vPrev;
+    const lineA = appear * smoothstep(0.05, 0.2, age) * burn(-2).a;
+    if (lineA > 0.01) {
+      c.save();
+      c.globalAlpha = lineA;
+      c.font = font(this.f.monoM, hair ? 26 : 34);
+      c.textAlign = 'center';
+      c.fillStyle = rgba(ink, hair ? 0.8 : 0.9);
+      const wtxt = `${siW(w)}${note ? ' · ' + note : ''}${n > 1 && !this.extra0(t) && t >= this.tRoll1 ? `   ×${ratio >= 100 ? Math.round(ratio).toLocaleString('en-US') : ratio.toFixed(ratio >= 10 ? 0 : 1)}` : ''}`;
+      c.fillText(wtxt, W / 2, base + (hair ? 70 : 92));
+      c.restore();
+    }
   }
 
-  /** Rolling number: each digit on a drum (continuous value), formatted like formatPDoom, plus hook 4's 9s. */
-  private drawDigits(c: CanvasRenderingContext2D, x: number, y: number, size: number, v: number, vPrev: number, extra: number, hair: boolean, style?: Style) {
-    const dec = formatPDoom(v).length - 2;
-    const scale = Math.pow(10, dec);
-    const N = v * scale, Np = vPrev * scale;
-    const adv = size * PADV;
-    const rowH = size * 1.05;
+  /** K on drums: sign, units, point, tenths, hundredths — centred on xc. The sign flips at zero. */
+  private drawK(c: CanvasRenderingContext2D, xc: number, y: number, size: number, k: number, kPrev: number, hair: boolean, style?: (i: number) => { col: string; a: number }) {
+    const adv = size * PADV, rowH = size * 1.05;
     const a0 = c.globalAlpha;
-    const glyph = (s: string, gx: number, gy: number) => {
-      if (hair) { c.lineWidth = 1.4 * this.lw; c.strokeText(s, gx, gy); } else c.fillText(s, gx, gy);
-    };
-    const apply = (i: number) => {
-      if (!style) return 1;
-      const st = style(i);
-      c.fillStyle = st.col; c.strokeStyle = st.col;
-      return st.a;
-    };
+    const glyph = (s: string, gx: number, gy: number) => { if (hair) { c.lineWidth = 1.4 * this.lw; c.strokeText(s, gx, gy); } else c.fillText(s, gx, gy); };
+    const apply = (i: number) => { if (!style) return 1; const st = style(i); c.fillStyle = st.col; c.strokeStyle = st.col; return st.a; };
     c.font = font(hair ? this.f.monoL : this.f.mono, size);
-    let sa = apply(0); c.globalAlpha = a0 * sa; glyph('0', x, y);
-    sa = apply(1); c.globalAlpha = a0 * sa; glyph('.', x + adv, y);
-    for (let d = 0; d < dec; d++) {
-      const kp = dec - 1 - d; // 0 = last digit
+    const x0 = xc - 2.5 * adv;
+    const N = Math.round(Math.abs(k) * 1e4) / 100, Np = Math.round(Math.abs(kPrev) * 1e4) / 100; // hundredths
+    let sa = apply(0); c.globalAlpha = a0 * sa;
+    if (k < -0.004) glyph('−', x0, y);
+    sa = apply(1); c.globalAlpha = a0 * sa; glyph('.', x0 + 2 * adv, y);
+    // drums: units (10^2 of hundredths), tenths (10^1), hundredths (10^0)
+    ([[2, x0 + adv], [1, x0 + 3 * adv], [0, x0 + 4 * adv]] as const).forEach(([kp, xx], di) => {
       const pos = drum(N, kp), posP = drum(Np, kp);
       const speed = Math.abs(pos - posP) * 60;
-      const xx = x + adv * (2 + d);
-      sa = apply(2 + d);
+      sa = apply(2 + di);
       c.save();
       c.beginPath();
       c.rect(xx - 6, y - size * PCAP - size * 0.3, adv + 12, size * PCAP + size * 0.6);
       c.clip();
-      const base = Math.floor(pos), fr = pos - base;
+      const b0 = Math.floor(pos), fr = pos - b0;
       const blur = clamp(speed / 25, 0, 1);
       for (let j = -1; j <= 1; j++) {
-        const dig = (((base + j) % 10) + 10) % 10;
+        const dig = (((b0 + j) % 10) + 10) % 10;
         const off = (fr - j) * rowH;
         const a = (1 - Math.min(1, Math.abs(off) / (rowH * 0.85))) * (hair && j !== 0 ? 0.5 : 1);
         if (a <= 0.01) continue;
@@ -770,38 +588,15 @@ export default class Hook extends Scene {
         }
       }
       c.restore();
-    }
-    // the multiplying 9s
+    });
     c.globalAlpha = a0;
-    for (let e = 0; e < extra; e++) glyph('9', x + adv * (2 + dec + e), y);
-    if (extra > 0) {
-      // stacked outlines of the whole string (maximal)
-      const s = '0.' + '9'.repeat(dec + extra);
-      c.save();
-      c.lineWidth = 1.5;
-      for (let r = 1; r <= 4; r++) {
-        c.globalAlpha = a0 * (0.35 - r * 0.07);
-        c.strokeText(s, x, y - r * rowH * 0.34);
-        c.strokeText(s, x, y + r * rowH * 0.34);
-      }
-      c.restore();
-    }
   }
-}
-
-/** FIG. 6's eye space → canvas px (its opening camera). */
-function eyePx(ex: number, ey: number) {
-  const dx = ex - EYE.cx, dy = ey - EYE.cy;
-  const cs = Math.cos(EYE.rot), sn = Math.sin(EYE.rot);
-  const px = EYE.zoom * (cs * dx + sn * dy), py = EYE.zoom * (-sn * dx + cs * dy);
-  return { x: W / 2 + px * (H / 2), y: H / 2 - py * (H / 2) };
 }
 
 /** Odometer drum position for the digit 10^k of a continuous count N. */
 function drum(N: number, k: number) {
   const p = Math.pow(10, k);
   if (k === 0) {
-    // detent: rests on the rounded digit (like toFixed), rolls continuously in between
     const r = Math.round(N), f = N - r;
     return (((r + Math.sign(f) * 0.5 * smoothstep(0.38, 0.5, Math.abs(f))) % 10) + 10) % 10;
   }
@@ -811,12 +606,9 @@ function drum(N: number, k: number) {
   return ((q % 10) + carry + 10) % 10;
 }
 
-function hexRGB(k: Col): [number, number, number] {
-  const n = parseInt(HEX[k].slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
 function lin(k: Col): [number, number, number] {
-  return hexRGB(k).map((v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }) as [number, number, number];
+  const n = parseInt(HEX[k].slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); }) as [number, number, number];
 }
 
 const COMP = /* glsl */ `
@@ -835,8 +627,8 @@ void main() {
     acc /= wsum;
     s = vec4(acc.rgb / max(acc.a, 1e-3), max(s.a, acc.a));
   }
-  // signal-orange type glows (only the signal colour exceeds the bloom threshold); gain = white-hot
-  float h = smoothstep(0.25, 0.7, s.r - s.g * 1.3);
+  // only the blue glows (blue well above red); gain = white-hot
+  float h = smoothstep(0.25, 0.7, s.b - s.r * 1.3);
   vec3 col = mix(bgCol, s.rgb * (1.0 + hot * h) * gain, s.a);
   fragColor = vec4(col, 1.0);
 }`;

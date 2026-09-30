@@ -12,3 +12,12 @@ analysis/__pycache__/
 analysis/stems/
 analysis/work/
 analysis/qa/
+
+# the song and anything carrying its lyrics are copyrighted: local only, never committed
+audio/
+lyrics/
+data/lyrics*.json
+app/public/plates/
+
+# cut versions (analysis/recut.py): carry the song and its lyrics
+data/cuts/

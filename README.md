@@ -1,44 +1,101 @@
-# I'm Upping My P(doom) — music video
+# power-video
 
-A generative, code-rendered music video with word-synced karaoke typography. Every frame is a deterministic function of song time, so the live preview in the browser and the offline 1080p60 (or 4K60) export are identical.
+A code-rendered music video for Grimes – "We Appreciate Power". Every frame is a deterministic
+function of song time, so the browser preview and the offline 1080p60 / 4K60 export are identical.
 
-**Watch it in 4K on YouTube:** https://www.youtube.com/watch?v=5EoO5413dBY
+**This is a fork of [mexicat/pdoom-video](https://github.com/mexicat/pdoom-video)** by Giacomo
+Magnanini, the engine behind the "I'm Upping My P(doom)" video
+([4K on YouTube](https://www.youtube.com/watch?v=5EoO5413dBY)). The renderer, the post chain, the
+typography, the scene API and the offline exporter are upstream's; the upstream remote is kept so
+engine fixes can be merged back in.
 
-The YouTube upload is an earlier render: it averages only 4 sub-frames per frame for motion blur, so fast motion shows stepped copies, and YouTube's compression smears the film grain. For the best version, render it locally (see [Render the video](#render-the-video)): the current code picks up to 324 sub-frames per frame where the motion needs them.
+Status: all 21 plates are built. The film follows P(doom)'s storyboard structure entry for entry
+([`docs/PDOOM-STRUCTURE.md`](docs/PDOOM-STRUCTURE.md): cuts on the last beat before a line, a
+designed hand-off at every cut, one maximal hit per plate, hook ×4 and prompt ×3), with its own
+imagery, one drawing language per plate ([`docs/PLATES.md`](docs/PLATES.md)), for the opposite
+argument: human–AI symbiosis ([`docs/TREATMENT.md`](docs/TREATMENT.md)). The lyric text still awaits
+a proofread. Decisions are logged in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
-The video was made with Claude (Opus 5.5) in Claude Code: the concept and treatment, the lyric alignment and audio analysis, the renderer, every scene and the renders were all worked out in conversation with Claude.
+## What this fork adds
 
-The song is not ours: see [Credits](#credits) for who wrote and made it.
+- **Analysis for any song** (upstream's was tuned to one track): a tempo window from librosa's
+  estimate, an automatic bar phase, named sections in `analysis/sections.json`, and a single-pass
+  MMS_FA CTC aligner with per-line windows. The knobs are `--bpm LO HI` and `--bar-offset K`.
+- **A bar-grid editor**, `analysis/make_edit.py`, that cuts a long song down to a target length.
+  It removes whole bars only, splices in vocal gaps, can start cold on any bar (`start_bar`), and
+  remaps the lyrics, sections and whisper words into edit time.
+- **A palette retune**: the signal family is submit blue, and the film halation follows the
+  signal colour. It was hardcoded orange.
+- **The plates** (`app/src/scenes/`): hook ×4 and prompt ×3 as templates plus one scene per
+  entry, ported move for move from P(doom)'s scenes with new imagery; a thread object (a blue
+  dot) handed across every cut, and a value on the Kardashev scale that climbs across the hooks
+  (`scenes/_power.ts` holds the shared motifs and every cut's hand-off geometry).
+- **Cut versions**: `analysis/recut.py` cuts the working edit down further along its bar grid
+  (splices off words, all timing data remapped) into `data/cuts/<name>/`; the app and the renderer
+  load one with `?cut=<name>` / `--cut <name>`, and the timeline skips entries a cut removed.
+  `analysis/cuts/` has a ~1:53 social cut and a ~3:00 long cut.
+- **A dev karaoke scene** (`app/src/scenes/karaoke.ts`), the placeholder for any entry whose scene
+  file is missing.
+- **Parallel rendering across machines**: the export is split into segments by measured cost,
+  the segments are joined losslessly and the audio is muxed once. See
+  [`docs/RENDERING.md`](docs/RENDERING.md).
 
-The concept, style bible and plate-by-plate treatment are in [`docs/TREATMENT.md`](docs/TREATMENT.md). The engine and scene API are documented in [`docs/ENGINE.md`](docs/ENGINE.md).
+**To put the engine on your own song, follow [`docs/ADAPTING.md`](docs/ADAPTING.md).**
 
-## Layout
+## Not in the repo (copyright)
 
-- `audio/pdoom.mp3` — the song (the Claude-Pop version, see Credits).
-- `lyrics/lyrics.src.js` — the original line-level lyrics (approximate timings).
-- `analysis/` — Python (uv) tools that produced the timing data: Demucs stem separation, CTC forced alignment cross-checked with Whisper, beat/downbeat/onset analysis. See `analysis/align.py` and `analysis/analyze.py`.
-- `data/lyrics.json` — word-level (and some syllable-level) lyric timings.
-- `data/audio.json` — tempo (132.007 BPM), beats, downbeats, sections, drum/vocal onsets and loudness envelopes.
-- `app/` — the renderer: TypeScript + three.js, bun + Vite.
-  - `src/engine/` — renderer core: timeline playback, post-processing (bloom, halation, grain), typography (Archivo, IBM Plex Mono, Cormorant Garamond, single-stroke plotter fonts), GPU line batches, HUD.
-  - `src/scenes/` — one module per plate (`open`, `loss`, `prompt`, `hook`, `room`, `shoggoth`, `spacetime`, `ascent`, `bureau`, `leftturn`, `paperclips`, `fuse`, `stack`, `dense`, `loom`, `ilya`, `outro`) plus shared motifs.
-  - `src/timeline.ts` — the edit: scene windows anchored to lyric lines and snapped to the beat grid.
-  - `scripts/render.ts` — offline renderer (headless Chrome → raw frames over WebSocket → ffmpeg).
-- `out/` — renders (not in the repo).
+The song and anything carrying its lyrics are local only and gitignored:
+- `audio/`: `source.mp3` and the edit, `song.mp3`
+- `lyrics/`: the lyric text, the whisper draft and the proofreading sheet
+- `data/lyrics.json`
+
+To build or render, supply your own legally obtained copy of the song. `data/audio.json` is
+committed. It holds derived timing data only: beats, sections and envelopes, with no audio and
+no lyric text.
 
 ## Requirements
 
-[bun](https://bun.sh), Google Chrome (the offline renderer drives it headless through playwright-core) and ffmpeg with libx264. The analysis tools need [uv](https://docs.astral.sh/uv/); the renderer doesn't.
+[bun](https://bun.sh), Google Chrome (the offline renderer drives it headless through
+playwright-core) and ffmpeg with libx264. The analysis tools need [uv](https://docs.astral.sh/uv/)
+and run on Apple Silicon, because whisper runs through mlx-whisper. The renderer doesn't need them.
+
+## Layout
+
+- `analysis/`: Python (uv) tools that turn the song into timing data.
+  - `whisper_run.py [turbo|large] [--draft]`: whisper word timestamps on the vocal stem; `--draft` writes a line-level lyric draft to proofread.
+  - `align_song.py`: word-level alignment (one global MMS_FA CTC Viterbi pass, per-line windows) → `data/lyrics.json`.
+  - `analyze.py [--plots] [--bpm LO HI] [--bar-offset K]`: beat grid, bar phase, sections (`sections.json`), envelopes, onsets → `data/audio.json`.
+  - `measure_offset.py`: stem/mp3 offset (→ `common.STEM_OFFSET_SAMPLES`).
+  - `make_edit.py`: cuts the song along the bar grid (`edit.json`), splicing only in vocal gaps; remaps the lyric draft, sections and whisper words into edit time.
+- `app/`: the renderer (TypeScript + three.js, bun + Vite). The engine in `src/engine/` is upstream's; `src/scenes/` holds the plates and `src/timeline.ts` the edit. The scene API is in [`docs/ENGINE.md`](docs/ENGINE.md).
+- `docs/`: [`ADAPTING.md`](docs/ADAPTING.md) (your own song), [`ENGINE.md`](docs/ENGINE.md) (scene API, upstream), [`RENDERING.md`](docs/RENDERING.md) (parallel renders), [`TREATMENT.md`](docs/TREATMENT.md) (this video's concept), [`DECISIONS.md`](docs/DECISIONS.md).
+- `out/`: renders (not in the repo).
+
+## Regenerate the data
+
+The video runs on a roughly 4-minute edit of the song, `analysis/edit.json`. The edit removes
+whole bars, so the beat grid is unbroken. The uncut song's data is kept aside in source time,
+and the edit is always rebuilt from it:
+
+```sh
+cd analysis && uv sync
+uv run python make_edit.py                # audio/song.mp3 + edit-time lyric draft, sections, whisper words
+uv run python -m demucs -n htdemucs_ft -o stems ../audio/song.mp3
+uv run python measure_offset.py           # check common.STEM_OFFSET_SAMPLES
+uv run python vocal_feats.py
+uv run python align_song.py               # data/lyrics.json
+uv run python analyze.py --plots          # data/audio.json (+ analysis/qa/*.png)
+```
+
+The full procedure, starting from a bare mp3, is in [`docs/ADAPTING.md`](docs/ADAPTING.md).
 
 ## Preview
 
 ```sh
 cd app
 bun install
-bunx vite
+bunx vite                                   # http://localhost:5173/?t=30
 ```
-
-Open http://localhost:5173 and use the keys below. `?t=23` starts at a given time.
 
 | Key | Action |
 |---|---|
@@ -49,51 +106,75 @@ Open http://localhost:5173 and use the keys below. `?t=23` starts at a given tim
 | `l` | loop the current scene |
 | `h` | hide the UI |
 
-The preview renders in real time on a recent Mac. The export is not real time and is heavier.
+## Render locally
 
-## Render the video
+**1. Inputs.** A fresh clone has `data/audio.json` but not the song. Before the app can boot you
+need two local files, which are never committed:
+- `audio/song.mp3`, the audio the video plays and the export muxes in
+- `data/lyrics.json`, the word timings. Without it the app stops with "no lyrics data found"
+
+Build both from your own copy of the song, following [`docs/ADAPTING.md`](docs/ADAPTING.md). If
+you use `analysis/edit.json`, `audio/song.mp3` is the edit that `make_edit.py` writes. Your
+source mp3 goes in `audio/source.mp3`.
+
+**2. Tools.** Install [bun](https://bun.sh), Google Chrome (the stable channel: the renderer
+launches it through playwright-core with `channel: 'chrome'`) and ffmpeg with libx264 on your
+`PATH`. Then run:
 
 ```sh
 cd app
-bun scripts/render.ts video --samples auto --shutter 0.2 --out ../out/pdoom.mp4
+bun install
 ```
 
-- **Output:** 1920×1080 at 60 fps, x264 CRF 16, AAC audio.
-- **Motion blur:** every frame is the average of many sub-frames spread over a short shutter (`--shutter 0.2`, a fifth of the frame time), so fast motion leaves a continuous streak instead of a few stepped copies. `--samples auto` picks the count per frame: 12 for a still frame, 36 for ordinary camera motion, 108 or 324 for whips, slams and fast zooms. It stops once more sub-frames would no longer change the image by more than `--tol` levels of 255 (default 3). `--samples N` takes a fixed N instead (`--samples 4` makes a quick draft). How it works: "Motion blur and sampling" in [`docs/ENGINE.md`](docs/ENGINE.md).
-- **Other modes:** `stills`, `sheet` (contact sheets, `--cuts` for every scene boundary), `perf`, and `plates` (regenerates `public/plates/`, the stills used by the outro's rewind montage; rerun it after changing a scene).
-
-### 4K
+**3. Check before a long render.** `render.ts` uses a dev server on `--url` (default
+`http://localhost:5173`). If none is reachable, it starts its own with live reload off.
 
 ```sh
-cd app
-bun scripts/render.ts video --scale 2 --samples auto --shutter 0.2 --x264 aq-mode=3:rc-lookahead=30 --out ../out/pdoom-4k.mp4
+bun scripts/render.ts sheet --cuts --out ../out/wip/cuts.png      # contact sheet at every scene boundary
+bun scripts/render.ts stills --t 1.5,30,90 --out ../out/wip       # a few full frames
+bun scripts/render.ts video --from 0 --to 10 --samples 4 --out ../out/wip/draft.mp4   # quick 10 s draft
 ```
 
-- **Output:** a true 3840×2160 render (not an upscale): every layer, line and shader is rendered at the physical resolution. Scenes are laid out in 1920×1080 logical pixels, so the 4K frame looks like the 1080p one, only sharper.
-- **Cost:** GPU-bound. A frame takes from about 40 ms (a still frame) to over 10 s (the ray-marched rooms at 108–324 sub-frames). The whole song took about 2.5 hours on an M5 Pro, rendered as segments in two parallel pipelines (`--from`/`--to`, then a lossless concat). Each pipeline uses about 5 GB for headless Chrome plus about 4 GB for ffmpeg; the shorter x264 lookahead above keeps ffmpeg's memory down.
-- **Encoding:** the film grain is rendered per 4K pixel, which is expensive to encode: at the default CRF 16 the file runs at about 670 Mbit/s (13 GB for the song, 8× the 1080p file), `--crf 18` gives about 450 Mbit/s and `--crf 20` about 230 Mbit/s.
-- `--scale 2` works with every mode. `stills` then saves full-resolution PNGs, and `perf` measures 4K frame times. In the browser preview, add `&scale=2` to the URL.
-
-## Regenerate the timing data
-
-The committed `data/*.json` files are all the renderer needs. Regenerating them needs the stems and intermediates, which are not in the repo:
-
-- **Stems:** Demucs `htdemucs_ft` into `analysis/stems/htdemucs_ft/pdoom/` (`uv run python -m demucs -n htdemucs_ft -o stems ../audio/pdoom.mp3`), plus the lead vocal from a mel-band-roformer karaoke model (audio-separator) in `analysis/stems/karaoke/lead.wav`.
-- **Intermediates:** `ctc_emissions.py`, `whisper_run.py` and `vocal_feats.py` write them to `analysis/work/`. The pipeline is described at the top of `analysis/align.py`.
+**4. Final render.**
 
 ```sh
-cd analysis
-uv run python align.py      # data/lyrics.json
-uv run python analyze.py    # data/audio.json
+# 1080p60
+bun scripts/render.ts video --samples auto --shutter 0.2 --out ../out/power.mp4
+# 4K60 (true 3840x2160, GPU-bound, hours on a laptop)
+bun scripts/render.ts video --scale 2 --samples auto --shutter 0.2 --x264 aq-mode=3:rc-lookahead=30 --out ../out/power-4k.mp4
 ```
 
-The models download about 4 GB of weights into `analysis/.cache/`; delete that folder afterwards.
+- **Output:** 1920×1080 at 60 fps, x264 CRF 16 (`--crf N` changes it), with AAC 320k audio from
+  `audio/song.mp3`. `--noaudio` leaves the audio out.
+- **Motion blur:** `--samples auto` picks a sub-frame count per frame (12 for a still frame, up
+  to 324 for fast motion) over a `--shutter` of 0.2 frame times. A fixed `--samples N` is
+  faster; `--samples 4` makes a quick draft.
+- **Part of the song:** `--from A --to B`, in seconds of song time. Segments cut on whole
+  frames, so they concatenate losslessly. That is how a long render is split, on one machine
+  with two pipelines or across several (see [`docs/RENDERING.md`](docs/RENDERING.md)).
+- **Speed:** `bun scripts/render.ts perf --from A --to B --samples auto` prints ms per frame, so
+  you can estimate the total render time first.
+- **While you edit scenes:** run a server without live reload (`PDOOM_NO_HMR=1 bunx vite --port 5190`)
+  and pass `--url http://localhost:5190`, so a file save cannot reload the page mid-render.
+- **Debugging:** `--headed` shows the Chrome window. Browser errors are printed after the run.
+
+This has been used on macOS with Apple Silicon: Chrome is launched with its Metal backend. On
+other platforms, expect to adjust the Chrome flags in `openPage` in `app/scripts/render.ts`.
+Upstream's [README](https://github.com/mexicat/pdoom-video#render-the-video) has more detail,
+including 4K cost, memory and bitrate numbers.
 
 ## Credits
 
-- **Song:** "I'm Upping My P(doom)". The lyrics are by [osmarks](https://docs.osmarks.net/hypha/p%28doom%29_song_objectively_correct_interpretation), built on an opening verse and chorus by [MusicPerson](https://www.udio.com/creators/MusicPerson), with lines suggested on the EleutherAI Discord and help from Claude on the outro and final chorus. The original was generated with Udio and released in November 2024 ([YouTube](https://www.youtube.com/watch?v=uEB5E67vcPA)). This video uses the "Claude-Pop" version made with Suno, posted by [deckard (@slimer48484)](https://x.com/slimer48484/status/2097752569212756134) in September 2026.
-- **Fonts:** Archivo, IBM Plex Mono and Cormorant Garamond (SIL Open Font License). Single-stroke EMS and Hershey fonts via the `hersheytext` package (OFL / public domain).
+- **Engine:** [mexicat/pdoom-video](https://github.com/mexicat/pdoom-video) by Giacomo Magnanini (MIT),
+  with contributions from Anwin Sharon and HEOJUNFO. It was made with Claude in Claude Code.
+- **This fork:** lycfyi, with Claude (Opus 5.5) in Claude Code.
+- **Song:** "We Appreciate Power" by Grimes (2018). Not ours, and not covered by the license.
+- **Fonts:** Archivo, IBM Plex Mono and Cormorant Garamond (SIL Open Font License). Single-stroke
+  EMS and Hershey fonts via the `hersheytext` package (OFL / public domain).
 
 ## License
 
-The code is released under the [MIT License](LICENSE). The fonts in `app/public/fonts/` keep their own licenses (see Credits), and the song and lyrics (`audio/`, `lyrics/`, `data/lyrics.json`) are not covered by it: they belong to their authors (see Credits).
+The code is released under the [MIT License](LICENSE). The original copyright is Giacomo
+Magnanini's, and the changes in this fork are lycfyi's. The fonts in `app/public/fonts/` keep
+their own licenses (see Credits). The song and its lyrics are not covered by the license: they
+belong to their authors.

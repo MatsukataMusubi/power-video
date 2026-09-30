@@ -43,7 +43,9 @@ export class AudioData {
   }
 
   static async load(): Promise<AudioData> {
-    for (const url of ['data/audio.json', 'data/audio.approx.json']) {
+    // ?cut=<name>: a shorter version made by analysis/recut.py (data/cuts/<name>/)
+    const cut = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('cut') : null;
+    for (const url of cut ? [`data/cuts/${cut}/audio.json`] : ['data/audio.json', 'data/audio.approx.json']) {
       const r = await fetch(url);
       if (r.ok && (r.headers.get('content-type') ?? '').includes('json')) return new AudioData(await r.json());
     }

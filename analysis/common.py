@@ -1,4 +1,4 @@
-"""Shared paths / cache setup for the pdoom analysis scripts.
+"""Shared paths / cache setup for the analysis scripts.
 
 Import this module FIRST (before torch / huggingface / mlx imports) so that all
 model downloads land in analysis/.cache/.
@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent          # analysis/
-PROJECT = ROOT.parent                            # pdoom/
+PROJECT = ROOT.parent                            # repo root
 CACHE = ROOT / ".cache"
 for var, sub in [("TORCH_HOME", "torch"), ("HF_HOME", "hf"), ("HF_HUB_CACHE", "hf/hub"),
                  ("XDG_CACHE_HOME", "xdg"), ("HUGGINGFACE_HUB_CACHE", "hf/hub"),
@@ -16,8 +16,8 @@ for var, sub in [("TORCH_HOME", "torch"), ("HF_HOME", "hf"), ("HF_HUB_CACHE", "h
     os.environ.setdefault(var, str(CACHE / sub))
     (CACHE / sub).mkdir(parents=True, exist_ok=True)
 
-AUDIO = PROJECT / "audio" / "pdoom.mp3"
-STEMS = ROOT / "stems" / "htdemucs_ft" / "pdoom"
+AUDIO = PROJECT / "audio" / "song.mp3"
+STEMS = ROOT / "stems" / "htdemucs_ft" / "song"
 LYRICS_SRC = PROJECT / "lyrics" / "lyrics.src.js"
 DATA = PROJECT / "data"
 QA = ROOT / "qa"
@@ -27,10 +27,10 @@ WORK.mkdir(exist_ok=True)
 DATA.mkdir(exist_ok=True)
 
 
-def load_lyrics_src():
-    """Parse lyrics.src.js -> list of (start, end, text)."""
-    import json, re
-    src = LYRICS_SRC.read_text(encoding="utf-8")
+def load_lyrics_src(path=None):
+    """Parse lyrics.src.js (or another file in its format) -> list of (start, end, text)."""
+    import json
+    src = (path or LYRICS_SRC).read_text(encoding="utf-8")
     body = src[src.index("["): src.rindex("]") + 1]
     return [tuple(x) for x in json.loads(body)]
 
@@ -40,7 +40,7 @@ def load_lyrics_src():
 # (ffmpeg / libsndfile / browsers) is our time reference, so stems are shifted
 # earlier by 1015 samples @ 44.1 kHz (measured by cross-correlation, constant
 # over the whole song).
-STEM_OFFSET_SAMPLES = 1015
+STEM_OFFSET_SAMPLES = 1015  # re-measured for this song with measure_offset.py: 1015 in every window
 STEM_OFFSET_SEC = STEM_OFFSET_SAMPLES / 44100
 
 
