@@ -19,5 +19,9 @@ lyrics/
 data/lyrics*.json
 app/public/plates/
 
+# demo 目录下的音频同理：demo 是本地试作，源文件可提交、音频不可
+demo/demo_audio.*
+demo_audio.*
+
 # cut versions (analysis/recut.py): carry the song and its lyrics
 data/cuts/

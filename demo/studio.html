@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>P5X gnostic analysis demo</title>
+<style>
+  html,body{margin:0;padding:0;background:#0A0A0B;}
+  canvas{display:block;}
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+'use strict';
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const W = 1920, H = 1080;
+const DUR = 68.18;                 // seconds of narration (measured)
+const FPS = 24;
+
+// ---- palette ------------------------------------------------------------
+const INK  = '#0A0A0B';   // near-black
+const RED  = '#E60012';   // P5X red
+const BONE = '#F2F0EC';   // paper white
+const GRAY = '#8A8A8A';
+const FONT = "'Microsoft YaHei','PingFang SC','Noto Sans CJK SC',sans-serif";
+
+// ---- subtitle lines: [start, end, text, segment] ------------------------
+// boundaries from ffmpeg silencedetect on the TTS narration (68.18s)
+const LINES = [
+  [0.54, 1.99, '女神异闻录五，夜幕魅影。', 1],
+  [2.31, 2.99, '表面是偷心的怪盗物语，', 1],
+  [3.65, 5.29, '底层跑的，却是一整套两千年前的诺斯底主义神学。', 1],
+  [5.61, 9.53, '今天，我们用符号学的刀，把这个世界观拆开。', 1],
+  [10.57, 11.72, '诺斯底主义的宇宙，由三层构成。', 2],
+  [12.01, 13.32, '顶层，是灵知——Gnosis。', 2],
+  [15.08, 17.27, '唯一真正的觉醒，人靠它认出自己被囚禁的事实。', 2],
+  [19.11, 19.70, '中间层，是德谬哥——Demiurge。', 2],
+  [21.75, 24.10, '那个自以为是造物主、实则只是匠人的伪神，', 2],
+  [24.72, 26.25, '它不知道，上头还有更高的存在。', 2],
+  [27.46, 30.45, '底层，是执政官——Archons。德谬哥的爪牙，用规则、欲望、恐惧，编织囚笼。', 2],
+  [30.69, 32.81, '对应到 P5X：', 2],
+  [33.46, 35.47, '心域 Kokoro，是每一座宫殿里的意识宇宙；', 2],
+  [35.75, 39.68, '德谬哥，是扭曲欲望的伪神支配者；', 2],
+  [40.03, 42.19, '执政官，是统治日常的规则与权威。', 2],
+  [42.49, 47.63, '而怪盗团的每一次偷心，都是一次灵知的行动——', 2],
+  [48.07, 50.64, '把被篡改的认知，夺回来。', 2],
+  [51.07, 54.20, '所以，P5X 不只是一部游戏。', 3],
+  [54.59, 59.53, '它是诺斯底主义的现代寓言——觉醒，反抗，夺回自我。', 3],
+  [59.93, 62.40, '这套世界观的哲学谱系，我们下期继续。', 3],
+];
+
+// keywords rendered in red inside subtitles
+const KEYS = ['Gnosis','灵知','Demiurge','德谬哥','Archons','执政官','Kokoro','P5X','怪盗团'];
+
+// ---- easing --------------------------------------------------------------
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const outExpo = k=>k>=1?1:1-Math.pow(2,-10*k);
+const outCubic = k=>1-Math.pow(1-k,3);
+const outBack  = k=>{const c=1.70158;const n=k-1;return 1+n*n*((c+1)*n+c);};
+
+// ---- helpers -------------------------------------------------------------
+function rnd(seed){ // mulberry32: deterministic
+  let t = seed>>>0;
+  return function(){ t += 0x6D2B79F5; let r = Math.imul(t ^ (t>>>15), 1|t);
+    r ^= r + Math.imul(r ^ (r>>>7), 61|r); return ((r ^ (r>>>14))>>>0)/4294967296; };
+}
+
+function etchRect(x,y,w,h,col,alpha){
+  ctx.save(); ctx.strokeStyle=col; ctx.globalAlpha=alpha; ctx.lineWidth=1;
+  ctx.strokeRect(x+.5,y+.5,w,h);
+  // corner ticks
+  const t=10; ctx.beginPath();
+  ctx.moveTo(x,y+t); ctx.lineTo(x,y); ctx.lineTo(x+t,y);
+  ctx.moveTo(x+w-t,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+t);
+  ctx.moveTo(x,y+h-t); ctx.lineTo(x,y+h); ctx.lineTo(x+t,y+h);
+  ctx.moveTo(x+w-t,y+h); ctx.lineTo(x+w,y+h); ctx.lineTo(x+w,y+h-t);
+  ctx.stroke(); ctx.restore();
+}
+function halo(x,y,r,col,alpha){
+  ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=col; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.stroke(); ctx.restore();
+}
+function text(str,x,y,size,col,align,alpha,font){
+  ctx.save(); ctx.font=(font||('600 '+size+'px '+FONT));
+  ctx.fillStyle=col; ctx.globalAlpha=alpha===undefined?1:alpha;
+  ctx.textAlign=align||'left'; ctx.textBaseline='middle';
+  ctx.fillText(str,x,y); ctx.restore();
+}
+
+// ---- subtitle strip --------------------------------------------------------
+// current active line for time t
+function activeLine(t){
+  for(let i=0;i<LINES.length;i++){ if(t>=LINES[i][0]&&t<=LINES[i][1]) return i; }
+  return -1;
+}
+// segmented text draw: keywords in red, others bone; returns nothing
+function drawRichText(str,x,y,size,align,alpha){
+  ctx.save(); ctx.font='600 '+size+'px '+FONT; ctx.globalAlpha=alpha; ctx.textAlign=align||'left'; ctx.textBaseline='middle';
+  let cx = x;
+  const segs = str.split(/(Gnosis|灵知|Demiurge|德谬哥|Archons|执政官|Kokoro|P5X|怪盗团)/);
+  for(const s of segs){
+    if(!s) continue;
+    ctx.fillStyle = KEYS.indexOf(s)>=0 ? RED : BONE;
+    ctx.fillText(s,cx,y);
+    cx += ctx.measureText(s).width;
+  }
+  ctx.restore();
+}
+function drawSubtitles(t){
+  const i = activeLine(t);
+  if(i<0) return;
+  const [a,b,str] = LINES[i];
+  const fadeIn  = clamp((t-a)/0.18,0,1);
+  const fadeOut = clamp((b-t)/0.18,0,1);
+  const alpha = Math.min(fadeIn,fadeOut);
+  if(alpha<=0) return;
+  // bar
+  ctx.save();
+  ctx.fillStyle='rgba(10,10,11,0.82)';
+  ctx.fillRect(0,H-104,W,104);
+  ctx.fillStyle='rgba(230,0,18,0.9)';
+  ctx.fillRect(0,H-104,W,2);
+  ctx.restore();
+  drawRichText(str,W/2,H-52,32,'center',alpha);
+  // reading progress scanline (word-level progress, estimated proportionally)
+  const prog = clamp((t-a)/(b-a),0,1);
+  ctx.save(); ctx.globalAlpha=alpha*0.8; ctx.strokeStyle=RED; ctx.lineWidth=2;
+  const scx = W*0.08 + (W*0.84)*prog;
+  ctx.beginPath(); ctx.moveTo(scx,H-104); ctx.lineTo(scx,H); ctx.stroke();
+  ctx.restore();
+}
+
+// ---- segment 1: title card -------------------------------------------------
+function drawSeg1(t){
+  // faint engineering grid
+  ctx.save(); ctx.strokeStyle='rgba(242,240,236,0.05)'; ctx.lineWidth=1;
+  for(let gx=80;gx<W;gx+=80){ ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
+  for(let gy=60;gy<H;gy+=60){ ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
+  ctx.restore();
+
+  // gnostic corner marks
+  ctx.save(); ctx.strokeStyle=BONE; ctx.globalAlpha=0.28;
+  ctx.beginPath();
+  ctx.moveTo(80,210); ctx.lineTo(80,80); ctx.lineTo(210,80);      // top-left triangle
+  ctx.moveTo(W-210,H-80); ctx.lineTo(W-80,H-80); ctx.lineTo(W-80,H-210);
+  ctx.stroke(); ctx.restore();
+  halo(W-150,180,46,'rgba(242,240,236,0.25)',0.5);
+
+  // kicker
+  text('PERSONA 5 · THE PHANTOM X — GNOSTIC READING',W/2,150,22,GRAY,'center',0.9);
+
+  // big P5X slam in
+  const t0=0.54, slam = outBack(clamp((t-t0)/1.1,0,1));
+  const sz = 760*slam, scale = 1 + (1-slam)*0.18;
+  ctx.save(); ctx.translate(W/2,400); ctx.scale(scale,scale);
+  ctx.fillStyle=RED;
+  ctx.font='900 '+sz+'px '+FONT; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('P5X',0,0);
+  ctx.restore();
+  // shock ring at landing
+  const land = clamp((t-(t0+1.1))/0.5,0,1);
+  if(land>0&&land<1){
+    ctx.save(); ctx.globalAlpha=(1-land)*0.7; ctx.strokeStyle=BONE; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(W/2,400,120+land*700,0,Math.PI*2); ctx.stroke(); ctx.restore();
+  }
+
+  // subtitle line (in-world): subhead chars type in
+  const sub='诺斯底主义的电子游戏化';
+  const chars=Math.floor(clamp((t-1.2)/1.4,0,1)*sub.length);
+  text(sub.slice(0,chars),W/2,600,52,BONE,'center',0.95);
+
+  // bottom rule
+  ctx.save(); ctx.strokeStyle='rgba(230,0,18,0.6)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(240,H-140); ctx.lineTo(W-240,H-140); ctx.stroke(); ctx.restore();
+}
+
+// ---- segment 2: the three-layer gnostic cosmos ----------------------------
+// layers: {key, lat, cn, desc, y0, y1, icon}
+const LAYERS = [
+  {key:'GNOSIS', lat:'Gnosis', cn:'灵知',   desc:'唯一真正的觉醒', y0:150, y1:320, icon:'tri'},
+  {key:'DEMIURGE', lat:'Demiurge', cn:'德谬哥', desc:'伪神 · 匠人', y0:345, y1:515, icon:'gear'},
+  {key:'ARCHONS', lat:'Archons', cn:'执政官', desc:'规则 · 欲望 · 恐惧', y0:540, y1:710, icon:'grid'},
+];
+const MAPS = [
+  {cn:'心域', lat:'Kokoro',      desc:'宫殿里的意识宇宙', y0:150, y1:320},
+  {cn:'伪神支配者', lat:'—',     desc:'扭曲欲望的统治者', y0:345, y1:515},
+  {cn:'规则权威', lat:'—',       desc:'统治日常的秩序', y0:540, y1:710},
+];
+// which visual element lights up at which subtitle index
+const SEG2_HL = {6:'GNOSIS',7:'GNOSIS',8:'DEMIURGE',9:'DEMIURGE',10:'DEMIURGE',11:'ARCHONS',13:'Kokoro',14:'伪神',15:'权威'};
+
+function drawIcon(kind,cx,cy,size,col,alpha){
+  ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=col; ctx.lineWidth=2; ctx.fillStyle=col;
+  if(kind==='tri'){
+    ctx.beginPath(); ctx.moveTo(cx,cy-size); ctx.lineTo(cx+size*0.87,cy+size*0.7); ctx.lineTo(cx-size*0.87,cy+size*0.7);
+    ctx.closePath(); ctx.stroke();
+  } else if(kind==='gear'){
+    ctx.beginPath(); ctx.arc(cx,cy,size*0.55,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx,cy,size*0.28,0,Math.PI*2); ctx.stroke();
+    for(let k=0;k<6;k++){ const a=k*Math.PI/3;
+      ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*size*0.55,cy+Math.sin(a)*size*0.55);
+      ctx.lineTo(cx+Math.cos(a)*size*0.9,cy+Math.sin(a)*size*0.9); ctx.stroke(); }
+  } else {
+    for(let gx=0;gx<3;gx++)for(let gy=0;gy<3;gy++){
+      ctx.strokeRect(cx-size/2+gx*size/2.6- (gx? size*0.0:0),cy-size/2+gy*size/2.6,size*0.42,size*0.42);
+    }
+  }
+  ctx.restore();
+}
+
+function drawSeg2(t){
+  const li = activeLine(t);
+  const hlKey = li>=0 ? SEG2_HL[li] : undefined;
+
+  // prison grid background
+  ctx.save(); ctx.strokeStyle='rgba(242,240,236,0.04)'; ctx.lineWidth=1;
+  for(let gx=120;gx<W;gx+=120){ ctx.beginPath(); ctx.moveTo(gx,0); ctx.lineTo(gx,H); ctx.stroke(); }
+  for(let gy=120;gy<H;gy+=120){ ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(W,gy); ctx.stroke(); }
+  ctx.restore();
+
+  // head
+  text('诺斯底三层宇宙 · GNOSTIC COSMOS',W/2,70,30,BONE,'center',0.95);
+
+  // left column: three layers
+  const LX=300, LW=560;
+  for(let k=0;k<3;k++){
+    const L=LAYERS[k];
+    const lit = hlKey===L.key;
+    const pul = lit ? 0.35+0.25*Math.sin(t*6) : 0;
+    const col = lit ? RED : BONE;
+    ctx.save(); ctx.globalAlpha=lit?0.95:0.55;
+    etchRect(LX,L.y0,LW,L.y1-L.y0,col,lit?1:0.5);
+    if(lit){ ctx.strokeStyle=RED; ctx.lineWidth=2; ctx.strokeRect(LX+3,L.y0+3,LW-6,L.y1-L.y0-6); }
+    drawIcon(L.icon,LX+110,(L.y0+L.y1)/2,34,col,lit?1:0.7);
+    text(L.lat,LX+200,(L.y0+L.y1)/2-22,34,col,'left',lit?1:0.8);
+    text(L.cn,LX+200,(L.y0+L.y1)/2+26,22,GRAY,'left',lit?0.95:0.7);
+    text(L.desc,LX+LW-20,(L.y0+L.y1)/2,20,GRAY,'right',lit?0.9:0.6);
+    if(lit){ halo(LX+LW,(L.y0+L.y1)/2,30+30*pul,RED,0.8*pul); }
+    ctx.restore();
+  }
+
+  // arrow bridge: appears while "对应到 P5X："
+  const arrowT = clamp((t-30.6)/0.5,0,1);
+  if(arrowT>0){
+    ctx.save(); ctx.globalAlpha=0.9; ctx.strokeStyle=RED; ctx.lineWidth=2;
+    const ax0=880, ax1=1010, ay=430;
+    ctx.beginPath(); ctx.moveTo(ax0,ay); ctx.lineTo(ax0+ (ax1-ax0)*outCubic(arrowT),ay);
+    ctx.lineTo(ax1,ay); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ax1,ay-10); ctx.lineTo(ax1+16,ay); ctx.lineTo(ax1,ay+10); ctx.closePath();
+    ctx.fillStyle=RED; ctx.fill();
+    text('映射',ax0+((ax1-ax0)*outCubic(arrowT))/2,ay-26,18,GRAY,'center',0.8);
+    ctx.restore();
+  }
+
+  // right column: P5X mapping
+  const RX=1060, RW=560;
+  text('P5X 对应',RX+RW/2,110,22,RED,'center',0.9);
+  for(let k=0;k<3;k++){
+    const M=MAPS[k];
+    const lit = (hlKey==='Kokoro'&&k===0)||(hlKey==='伪神'&&k===1)||(hlKey==='权威'&&k===2);
+    ctx.save(); ctx.globalAlpha=lit?0.95:0.55;
+    etchRect(RX,M.y0,RW,M.y1-M.y0,lit?RED:BONE,lit?1:0.5);
+    if(lit){ ctx.strokeStyle=RED; ctx.lineWidth=2; ctx.strokeRect(RX+3,M.y0+3,RW-6,M.y1-M.y0-6); }
+    text(M.cn,RX+40,(M.y0+M.y1)/2-24,34,lit?RED:BONE,'left',lit?1:0.85);
+    text(M.desc,RX+40,(M.y0+M.y1)/2+24,20,GRAY,'left',lit?0.95:0.7);
+    if(lit){ halo(RX+RW,(M.y0+M.y1)/2,30+20*(0.35+0.25*Math.sin(t*6)),RED,0.7); }
+    ctx.restore();
+  }
+
+  // footnote
+  text('GNOSTIC COSMOS → PHANTOM X · 三层映射',W/2,H-130,18,GRAY,'center',0.6);
+}
+
+// ---- segment 3: ending ----------------------------------------------------
+function drawSeg3(t){
+  // soft vignette
+  ctx.save(); const g=ctx.createRadialGradient(W/2,H/2,300,W/2,H/2,1100);
+  g.addColorStop(0,'rgba(230,0,18,0.06)'); g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H); ctx.restore();
+
+  // small line first
+  const c1 = clamp((t-51.0)/0.5,0,1);
+  if(c1>0){ text('所以，P5X 不只是一部游戏。',W/2,300,40,c1>0.5?BONE:GRAY,'center',c1); }
+
+  // the three words slam in one by one (fixed centred layout)
+  const words=['觉醒','反抗','夺回自我'];
+  const starts=[54.6,56.9,58.0];
+  ctx.font='900 120px '+FONT; ctx.textAlign='center'; ctx.textBaseline='middle';
+  const ws=words.map(w=>ctx.measureText(w).width);
+  const gap=44, total=ws[0]+gap+ws[1]+gap+ws[2];
+  let x=W/2-total/2;
+  for(let k=0;k<3;k++){
+    const kk=outBack(clamp((t-starts[k])/0.45,0,1));
+    if(kk<=0){ x+=ws[k]+gap; continue; }
+    ctx.save(); ctx.translate(x+ws[k]/2,520); ctx.scale(kk,kk);
+    ctx.fillStyle=RED; ctx.font='900 120px '+FONT;
+    ctx.fillText(words[k],0,0); ctx.restore();
+    x+=ws[k]+gap;
+  }
+
+  // to-be-continued
+  const c2 = clamp((t-59.9)/0.6,0,1);
+  if(c2>0){
+    text('这套世界观的哲学谱系，我们下期继续。',W/2,700,30,GRAY,'center',c2);
+    text('TO BE CONTINUED',W/2,780,24,RED,'center',c2*0.9);
+  }
+  // pulse dot
+  const p = 0.5+0.5*Math.sin(t*3);
+  ctx.save(); ctx.fillStyle=RED; ctx.globalAlpha=0.3+0.7*p;
+  ctx.beginPath(); ctx.arc(W-140,H-140,10+6*p,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // fade to black at the very end
+  const fo = clamp((t-63.4)/1.6,0,1);
+  if(fo>0){ ctx.fillStyle='rgba(10,10,11,'+fo+')'; ctx.fillRect(0,0,W,H); }
+}
+
+// ---- master draw -----------------------------------------------------------
+function draw(t){
+  ctx.fillStyle=INK; ctx.fillRect(0,0,W,H);
+  if(t<9.60){
+    drawSeg1(t);
+    // flash transition into seg2 (only fires near the boundary)
+    if(t>=9.45){ const f=clamp((t-9.53)/0.08,0,1); if(f<1){ ctx.fillStyle='rgba(242,240,236,'+(1-f)+')'; ctx.fillRect(0,0,W,H); } }
+  } else if(t<51.0){
+    drawSeg2(t);
+    // dip to black into seg3
+    const f=clamp((t-50.62)/0.25,0,1); if(f>0){ ctx.fillStyle='rgba(10,10,11,'+outCubic(f)*0.9+')'; ctx.fillRect(0,0,W,H); }
+  } else {
+    drawSeg3(t);
+  }
+  drawSubtitles(t);
+}
+
+// ---- page contract for render.mjs ------------------------------------------
+window.ready = true;
+window.DUR = DUR;
+window.gpuInfo = ()=>({canvas:cv, ua:navigator.userAgent.slice(0,60)});
+window.renderAt = (t,type,q)=>{ draw(t); return cv.toDataURL(type||'image/jpeg', q||0.93); };
+</script>
+</body>
+</html>
